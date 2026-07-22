@@ -381,6 +381,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
         self.assertIn("release-manifest", workflow)
         self.assertIn("npm pack", workflow)
         self.assertIn("npm publish", workflow)
+        self.assertIn("if: vars.MINUTES_NPM_PUBLISH == 'true'", workflow)
         self.assertIn("gh release create", workflow)
         self.assertIn("actions/download-artifact@v8", workflow)
 

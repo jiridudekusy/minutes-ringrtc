@@ -193,4 +193,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
       - name: Publish compatibility package
+        if: vars.MINUTES_NPM_PUBLISH == 'true'
         run: npm publish release/*.tgz --access public --provenance
