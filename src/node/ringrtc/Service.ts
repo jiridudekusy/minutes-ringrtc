@@ -160,6 +160,7 @@ class NativeCallManager {
   Native.cm_setVoiceProcessingEnabled;
 (NativeCallManager.prototype as any).isAudioTapSupported =
   Native.cm_audioTapIsSupported;
+(NativeCallManager.prototype as any).audioTapVersion = Native.cm_audioTapVersion;
 (NativeCallManager.prototype as any).startAudioTap = Native.cm_startAudioTap;
 (NativeCallManager.prototype as any).readAudioTap = Native.cm_readAudioTap;
 (NativeCallManager.prototype as any).stopAudioTap = Native.cm_stopAudioTap;
@@ -1976,6 +1977,10 @@ export class RingRTCType {
     return this.callManager.isAudioTapSupported();
   }
 
+  audioTapVersion(): number {
+    return this.callManager.audioTapVersion();
+  }
+
   startAudioTap(): void {
     this.callManager.startAudioTap();
   }
@@ -2021,6 +2026,8 @@ export type AudioDevice = {
 export type AudioTapChunk = {
   sampleRate: number;
   channels: number;
+  localInputStartSample: number;
+  remotePlayoutStartSample: number;
   localInputPcm: Uint8Array<ArrayBuffer>;
   remotePlayoutPcm: Uint8Array<ArrayBuffer>;
   droppedLocalInputSamples: number;
@@ -3220,6 +3227,7 @@ export type CallManager = {
   setAudioOutput(index: number): void;
   setVoiceProcessingEnabled(enabled: boolean): void;
   isAudioTapSupported(): boolean;
+  audioTapVersion(): number;
   startAudioTap(): void;
   readAudioTap(maxSamplesPerSource: number): AudioTapChunk;
   stopAudioTap(): void;

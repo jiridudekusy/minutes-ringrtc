@@ -24,7 +24,9 @@ use neon::{
 use strum::IntoDiscriminant;
 
 use crate::{
-    audio_tap::{AUDIO_TAP_CHANNELS, AUDIO_TAP_SAMPLE_RATE, pcm_i16_to_le_bytes},
+    audio_tap::{
+        AUDIO_TAP_API_VERSION, AUDIO_TAP_CHANNELS, AUDIO_TAP_SAMPLE_RATE, pcm_i16_to_le_bytes,
+    },
     common::{CallConfig, CallId, CallMediaType, DataMode, DeviceId, Result},
     core::{
         assets::AssetHandle,
@@ -2361,6 +2363,11 @@ fn audioTapIsSupported(mut cx: FunctionContext) -> JsResult<JsBoolean> {
 }
 
 #[allow(non_snake_case)]
+fn audioTapVersion(mut cx: FunctionContext) -> JsResult<JsNumber> {
+    Ok(cx.number(AUDIO_TAP_API_VERSION))
+}
+
+#[allow(non_snake_case)]
 fn startAudioTap(mut cx: FunctionContext) -> JsResult<JsValue> {
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.peer_connection_factory.start_audio_tap()
@@ -2398,6 +2405,14 @@ fn readAudioTap(mut cx: FunctionContext) -> JsResult<JsValue> {
     result.set(&mut cx, "sampleRate", sample_rate)?;
     let channels = cx.number(AUDIO_TAP_CHANNELS);
     result.set(&mut cx, "channels", channels)?;
+    let local_input_start_sample = cx.number(chunk.local_input_start_sample as f64);
+    result.set(&mut cx, "localInputStartSample", local_input_start_sample)?;
+    let remote_playout_start_sample = cx.number(chunk.remote_playout_start_sample as f64);
+    result.set(
+        &mut cx,
+        "remotePlayoutStartSample",
+        remote_playout_start_sample,
+    )?;
 
     let local_input_pcm = pcm_i16_to_le_bytes(chunk.local_input);
     let local_input_pcm = JsUint8Array::from_slice(&mut cx, &local_input_pcm)?;
@@ -3345,6 +3360,7 @@ fn register(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("cm_setAudioOutput", setAudioOutput)?;
     cx.export_function("cm_setVoiceProcessingEnabled", setVoiceProcessingEnabled)?;
     cx.export_function("cm_audioTapIsSupported", audioTapIsSupported)?;
+    cx.export_function("cm_audioTapVersion", audioTapVersion)?;
     cx.export_function("cm_startAudioTap", startAudioTap)?;
     cx.export_function("cm_readAudioTap", readAudioTap)?;
     cx.export_function("cm_stopAudioTap", stopAudioTap)?;

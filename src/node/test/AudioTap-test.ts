@@ -9,12 +9,15 @@ import { RingRTC } from '../index';
 describe('RingRTC audio tap', () => {
   it('exposes bounded polling controls and PCM metadata', () => {
     expect(RingRTC.isAudioTapSupported()).to.equal(true);
+    expect(RingRTC.audioTapVersion()).to.equal(1);
 
     RingRTC.startAudioTap();
     try {
       const chunk = RingRTC.readAudioTap(480);
       expect(chunk.sampleRate).to.equal(48_000);
       expect(chunk.channels).to.equal(1);
+      expect(chunk.localInputStartSample).to.be.at.least(0);
+      expect(chunk.remotePlayoutStartSample).to.be.at.least(0);
       expect(chunk.localInputPcm.byteLength % 2).to.equal(0);
       expect(chunk.remotePlayoutPcm.byteLength % 2).to.equal(0);
       expect(chunk.droppedLocalInputSamples).to.be.at.least(0);

@@ -97,3 +97,19 @@ fn pcm_is_exposed_as_explicit_little_endian_bytes() {
         vec![0x34, 0x12, 0xfe, 0xff]
     );
 }
+
+#[test]
+fn sample_offsets_are_monotonic_and_include_overflowed_samples() {
+    let tap = AudioTap::new(3);
+    tap.start();
+
+    tap.push(AudioTapSource::LocalInput, &[1, 2, 3, 4]);
+    let first = tap.drain(2);
+    assert_eq!(first.local_input_start_sample, 1);
+    assert_eq!(first.local_input, vec![2, 3]);
+
+    tap.push(AudioTapSource::LocalInput, &[5, 6]);
+    let second = tap.drain(usize::MAX);
+    assert_eq!(second.local_input_start_sample, 3);
+    assert_eq!(second.local_input, vec![4, 5, 6]);
+}

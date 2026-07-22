@@ -19,6 +19,7 @@ use std::{
 
 pub const AUDIO_TAP_SAMPLE_RATE: u32 = 48_000;
 pub const AUDIO_TAP_CHANNELS: u8 = 1;
+pub const AUDIO_TAP_API_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AudioTapSource {
@@ -30,6 +31,8 @@ pub enum AudioTapSource {
 pub struct AudioTapChunk {
     pub local_input: Vec<i16>,
     pub remote_playout: Vec<i16>,
+    pub local_input_start_sample: u64,
+    pub remote_playout_start_sample: u64,
     pub dropped_local_input: u64,
     pub dropped_remote_playout: u64,
 }
@@ -38,6 +41,8 @@ pub struct AudioTapChunk {
 struct Buffers {
     local_input: VecDeque<i16>,
     remote_playout: VecDeque<i16>,
+    local_input_start_sample: u64,
+    remote_playout_start_sample: u64,
 }
 
 #[derive(Debug)]
@@ -68,6 +73,8 @@ impl AudioTap {
         if let Ok(mut buffers) = self.buffers.lock() {
             buffers.local_input.clear();
             buffers.remote_playout.clear();
+            buffers.local_input_start_sample = 0;
+            buffers.remote_playout_start_sample = 0;
         }
         self.dropped_local_input.store(0, Ordering::Relaxed);
         self.dropped_remote_playout.store(0, Ordering::Relaxed);
@@ -91,11 +98,27 @@ impl AudioTap {
 
         let dropped = match self.buffers.try_lock() {
             Ok(mut buffers) => {
-                let buffer = match source {
-                    AudioTapSource::LocalInput => &mut buffers.local_input,
-                    AudioTapSource::RemotePlayout => &mut buffers.remote_playout,
+                let dropped = match source {
+                    AudioTapSource::LocalInput => append_bounded(
+                        &mut buffers.local_input,
+                        samples,
+                        self.capacity_samples_per_source,
+                    ),
+                    AudioTapSource::RemotePlayout => append_bounded(
+                        &mut buffers.remote_playout,
+                        samples,
+                        self.capacity_samples_per_source,
+                    ),
                 };
-                append_bounded(buffer, samples, self.capacity_samples_per_source)
+                match source {
+                    AudioTapSource::LocalInput => {
+                        buffers.local_input_start_sample += dropped;
+                    }
+                    AudioTapSource::RemotePlayout => {
+                        buffers.remote_playout_start_sample += dropped;
+                    }
+                }
+                dropped
             }
             Err(_) => samples.len() as u64,
         };
@@ -119,19 +142,31 @@ impl AudioTap {
     }
 
     pub fn drain(&self, max_samples_per_source: usize) -> AudioTapChunk {
-        let (local_input, remote_playout) = self.buffers.lock().map_or_else(
-            |_| (Vec::new(), Vec::new()),
-            |mut buffers| {
-                (
-                    drain_front(&mut buffers.local_input, max_samples_per_source),
-                    drain_front(&mut buffers.remote_playout, max_samples_per_source),
-                )
-            },
-        );
+        let (local_input, remote_playout, local_input_start_sample, remote_playout_start_sample) =
+            self.buffers.lock().map_or_else(
+                |_| (Vec::new(), Vec::new(), 0, 0),
+                |mut buffers| {
+                    let local_input_start_sample = buffers.local_input_start_sample;
+                    let remote_playout_start_sample = buffers.remote_playout_start_sample;
+                    let local_input = drain_front(&mut buffers.local_input, max_samples_per_source);
+                    let remote_playout =
+                        drain_front(&mut buffers.remote_playout, max_samples_per_source);
+                    buffers.local_input_start_sample += local_input.len() as u64;
+                    buffers.remote_playout_start_sample += remote_playout.len() as u64;
+                    (
+                        local_input,
+                        remote_playout,
+                        local_input_start_sample,
+                        remote_playout_start_sample,
+                    )
+                },
+            );
 
         AudioTapChunk {
             local_input,
             remote_playout,
+            local_input_start_sample,
+            remote_playout_start_sample,
             dropped_local_input: self.dropped_local_input.swap(0, Ordering::Relaxed),
             dropped_remote_playout: self.dropped_remote_playout.swap(0, Ordering::Relaxed),
         }
@@ -151,11 +186,27 @@ impl AudioTap {
 
         let dropped = match self.buffers.try_lock() {
             Ok(mut buffers) => {
-                let buffer = match source {
-                    AudioTapSource::LocalInput => &mut buffers.local_input,
-                    AudioTapSource::RemotePlayout => &mut buffers.remote_playout,
+                let dropped = match source {
+                    AudioTapSource::LocalInput => append_silence_bounded(
+                        &mut buffers.local_input,
+                        sample_count,
+                        self.capacity_samples_per_source,
+                    ),
+                    AudioTapSource::RemotePlayout => append_silence_bounded(
+                        &mut buffers.remote_playout,
+                        sample_count,
+                        self.capacity_samples_per_source,
+                    ),
                 };
-                append_silence_bounded(buffer, sample_count, self.capacity_samples_per_source)
+                match source {
+                    AudioTapSource::LocalInput => {
+                        buffers.local_input_start_sample += dropped;
+                    }
+                    AudioTapSource::RemotePlayout => {
+                        buffers.remote_playout_start_sample += dropped;
+                    }
+                }
+                dropped
             }
             Err(_) => sample_count as u64,
         };
