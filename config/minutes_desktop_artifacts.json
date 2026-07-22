@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "package": "@minutes/ringrtc",
-  "packageVersion": "2.69.7-minutes.1",
+  "packageVersion": "2.69.7-minutes.2",
   "upstreamVersion": "2.69.7",
   "tapApiVersion": 1,
   "targets": {
@@ -13,7 +13,7 @@
       "nodePlatform": "darwin",
       "nodeArch": "arm64",
       "output": "src/node/build/darwin/libringrtc-arm64.node",
-      "artifactName": "minutes-ringrtc-v2.69.7-minutes.1-darwin-arm64"
+      "artifactName": "minutes-ringrtc-v2.69.7-minutes.2-darwin-arm64"
     },
     "linux-x64": {
       "runner": "ubuntu-22.04",
@@ -33,7 +33,7 @@
       "nodePlatform": "win32",
       "nodeArch": "x64",
       "output": "src/node/build/win32/libringrtc-x64.node",
-      "artifactName": "minutes-ringrtc-v2.69.7-minutes.1-win32-x64"
+      "artifactName": "minutes-ringrtc-v2.69.7-minutes.2-win32-x64"
     }
   }
 }

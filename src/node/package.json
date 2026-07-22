@@ -1,12 +1,12 @@
 {
   "name": "@minutes/ringrtc",
-  "version": "2.69.7-minutes.1",
+  "version": "2.69.7-minutes.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/jiridudekusy/minutes-ringrtc.git",
     "directory": "src/node"
   },
-  "description": "Minutes-compatible RingRTC with a versioned call-audio tap.",
+  "description": "Minutes-compatible RingRTC with versioned call-audio and outgoing-video taps.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [

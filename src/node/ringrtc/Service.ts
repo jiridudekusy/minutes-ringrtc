@@ -160,10 +160,18 @@ class NativeCallManager {
   Native.cm_setVoiceProcessingEnabled;
 (NativeCallManager.prototype as any).isAudioTapSupported =
   Native.cm_audioTapIsSupported;
-(NativeCallManager.prototype as any).audioTapVersion = Native.cm_audioTapVersion;
+(NativeCallManager.prototype as any).audioTapVersion =
+  Native.cm_audioTapVersion;
 (NativeCallManager.prototype as any).startAudioTap = Native.cm_startAudioTap;
 (NativeCallManager.prototype as any).readAudioTap = Native.cm_readAudioTap;
 (NativeCallManager.prototype as any).stopAudioTap = Native.cm_stopAudioTap;
+(NativeCallManager.prototype as any).isVideoTapSupported =
+  Native.cm_videoTapIsSupported;
+(NativeCallManager.prototype as any).videoTapVersion =
+  Native.cm_videoTapVersion;
+(NativeCallManager.prototype as any).startVideoTap = Native.cm_startVideoTap;
+(NativeCallManager.prototype as any).readVideoTap = Native.cm_readVideoTap;
+(NativeCallManager.prototype as any).stopVideoTap = Native.cm_stopVideoTap;
 (NativeCallManager.prototype as any).processEvents = Native.cm_processEvents;
 (NativeCallManager.prototype as any).setRtcStatsInterval =
   Native.cm_setRtcStatsInterval;
@@ -1992,6 +2000,26 @@ export class RingRTCType {
   stopAudioTap(): void {
     this.callManager.stopAudioTap();
   }
+
+  isVideoTapSupported(): boolean {
+    return this.callManager.isVideoTapSupported();
+  }
+
+  videoTapVersion(): number {
+    return this.callManager.videoTapVersion();
+  }
+
+  startVideoTap(): void {
+    this.callManager.startVideoTap();
+  }
+
+  readVideoTap(lastSequence: number): VideoTapEvent | undefined {
+    return this.callManager.readVideoTap(lastSequence);
+  }
+
+  stopVideoTap(): void {
+    this.callManager.stopVideoTap();
+  }
 }
 
 export type CallSettings = {
@@ -2033,6 +2061,24 @@ export type AudioTapChunk = {
   droppedLocalInputSamples: number;
   droppedRemotePlayoutSamples: number;
 };
+
+export type VideoTapInactiveEvent = {
+  sequence: number;
+  timestampUs: number;
+  active: false;
+};
+
+export type VideoTapFrameEvent = {
+  sequence: number;
+  timestampUs: number;
+  active: true;
+  width: number;
+  height: number;
+  format: 'i420' | 'nv12' | 'rgba';
+  data: Uint8Array<ArrayBuffer>;
+};
+
+export type VideoTapEvent = VideoTapInactiveEvent | VideoTapFrameEvent;
 
 // Given a weird name to not conflict with WebCodec's VideoPixelFormat
 export enum VideoPixelFormatEnum {
@@ -3231,6 +3277,11 @@ export type CallManager = {
   startAudioTap(): void;
   readAudioTap(maxSamplesPerSource: number): AudioTapChunk;
   stopAudioTap(): void;
+  isVideoTapSupported(): boolean;
+  videoTapVersion(): number;
+  startVideoTap(): void;
+  readVideoTap(lastSequence: number): VideoTapEvent | undefined;
+  stopVideoTap(): void;
 };
 
 export type CallManagerCallbacks = {
