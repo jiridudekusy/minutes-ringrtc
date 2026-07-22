@@ -29,7 +29,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
         return {
             "schemaVersion": 1,
             "package": "@minutes/ringrtc",
-            "packageVersion": "2.69.7-minutes.1",
+            "packageVersion": "2.69.7-minutes.2",
             "upstreamVersion": "2.69.7",
             "tapApiVersion": 1,
             "targets": {
@@ -42,7 +42,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
                     "nodeArch": "arm64",
                     "output": "src/node/build/darwin/libringrtc-arm64.node",
                     "artifactName": (
-                        "minutes-ringrtc-v2.69.7-minutes.1-darwin-arm64"
+                        "minutes-ringrtc-v2.69.7-minutes.2-darwin-arm64"
                     ),
                 },
                 "windows-x64": {
@@ -54,7 +54,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
                     "nodeArch": "x64",
                     "output": "src/node/build/win32/libringrtc-x64.node",
                     "artifactName": (
-                        "minutes-ringrtc-v2.69.7-minutes.1-win32-x64"
+                        "minutes-ringrtc-v2.69.7-minutes.2-win32-x64"
                     ),
                 },
             },
@@ -185,7 +185,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
         self.assertEqual(
             result.stderr,
             "manifest error: packageVersion 9.9.9 does not match Node package "
-            "version 2.69.7-minutes.1\n",
+            "version 2.69.7-minutes.2\n",
         )
 
     def test_rejects_manifest_with_wrong_audio_tap_api_version(self) -> None:
@@ -281,7 +281,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
         package = json.loads(NODE_PACKAGE.read_text(encoding="utf-8"))
 
         self.assertEqual(package["name"], "@minutes/ringrtc")
-        self.assertEqual(package["version"], "2.69.7-minutes.1")
+        self.assertEqual(package["version"], "2.69.7-minutes.2")
         self.assertEqual(package["config"]["upstreamVersion"], "2.69.7")
         self.assertEqual(package["config"]["tapApiVersion"], 1)
         self.assertEqual(
@@ -306,7 +306,12 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
                 "cm_audioTapVersion: () => 2,"
                 "cm_startAudioTap() {},"
                 "cm_readAudioTap() {},"
-                "cm_stopAudioTap() {}"
+                "cm_stopAudioTap() {},"
+                "cm_videoTapIsSupported: () => true,"
+                "cm_videoTapVersion: () => 1,"
+                "cm_startVideoTap() {},"
+                "cm_readVideoTap() {},"
+                "cm_stopVideoTap() {}"
                 "};",
                 encoding="utf-8",
             )
@@ -321,6 +326,63 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
         self.assertEqual(
             result.stderr,
             "addon error: expected audio tap API version 1, got 2\n",
+        )
+
+    def test_addon_verifier_rejects_wrong_video_tap_api_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            addon = Path(temp_dir) / "addon.js"
+            addon.write_text(
+                "module.exports = {"
+                "cm_audioTapIsSupported: () => true,"
+                "cm_audioTapVersion: () => 1,"
+                "cm_startAudioTap() {},"
+                "cm_readAudioTap() {},"
+                "cm_stopAudioTap() {},"
+                "cm_videoTapIsSupported: () => true,"
+                "cm_videoTapVersion: () => 2,"
+                "cm_startVideoTap() {},"
+                "cm_readVideoTap() {},"
+                "cm_stopVideoTap() {}"
+                "};",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["node", str(ADDON_VERIFIER), str(addon), "1"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(
+            result.stderr,
+            "addon error: expected video tap API version 1, got 2\n",
+        )
+
+    def test_addon_verifier_requires_video_tap_api(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            addon = Path(temp_dir) / "addon.js"
+            addon.write_text(
+                "module.exports = {"
+                "cm_audioTapIsSupported: () => true,"
+                "cm_audioTapVersion: () => 1,"
+                "cm_startAudioTap() {},"
+                "cm_readAudioTap() {},"
+                "cm_stopAudioTap() {}"
+                "};",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["node", str(ADDON_VERIFIER), str(addon), "1"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(
+            result.stderr,
+            "addon error: missing native export cm_videoTapIsSupported\n",
         )
 
     def test_release_manifest_requires_and_checksums_both_addons(self) -> None:

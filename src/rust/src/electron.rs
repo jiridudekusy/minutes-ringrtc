@@ -48,6 +48,7 @@ use crate::{
         CallState, CallStateHandler, GroupUpdate, GroupUpdateHandler, NativeCallContext,
         NativePlatform, PeerId, RejectReason, SignalingSender,
     },
+    video_tap::{VIDEO_TAP_API_VERSION, VideoTap, VideoTapEvent, VideoTapFormat},
     webrtc::{
         media::{AudioTrack, VideoFrame, VideoPixelFormat, VideoSink, VideoSource, VideoTrack},
         peer_connection::AudioLevel,
@@ -413,6 +414,7 @@ pub struct CallEndpoint {
     // We only keep this around so we can pass it to PeerConnectionFactory::create_peer_connection
     // via the NativeCallContext.
     outgoing_video_track: VideoTrack,
+    video_tap: VideoTap,
     // Boxed so we can pass it as a Box<dyn VideoSink>
     incoming_video_sink: Box<LastFramesVideoSink>,
 
@@ -537,6 +539,7 @@ impl CallEndpoint {
             outgoing_audio_track,
             outgoing_video_source,
             outgoing_video_track,
+            video_tap: VideoTap::default(),
             incoming_video_sink,
             peer_connection_factory,
             js_object,
@@ -982,6 +985,7 @@ fn proceed(mut cx: FunctionContext) -> JsResult<JsValue> {
             endpoint.incoming_video_sink.clone(),
         );
         endpoint.outgoing_video_track.set_content_hint(false);
+        endpoint.video_tap.set_screen_share(false);
         // This should be cleared at with "call concluded", but just in case
         // we'll clear here as well.
         endpoint.incoming_video_sink.clear();
@@ -1033,6 +1037,7 @@ fn hangup(mut cx: FunctionContext) -> JsResult<JsValue> {
     debug!("JsCallManager.hangup()");
 
     with_call_endpoint(&mut cx, |endpoint| {
+        endpoint.video_tap.reset_outgoing_state();
         endpoint.call_manager.hangup()?;
         Ok(())
     })
@@ -1353,6 +1358,7 @@ fn setOutgoingVideoEnabled(mut cx: FunctionContext) -> JsResult<JsValue> {
 
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_video_track.set_enabled(enabled);
+        endpoint.video_tap.set_outgoing_video_enabled(enabled);
         if let Ok(mut active_connection) = endpoint.call_manager.active_connection() {
             active_connection.update_sender_status(signaling::SenderStatus {
                 video_enabled: Some(enabled),
@@ -1374,6 +1380,7 @@ fn setOutgoingVideoIsScreenShare(mut cx: FunctionContext) -> JsResult<JsValue> {
         endpoint
             .outgoing_video_track
             .set_content_hint(is_screenshare);
+        endpoint.video_tap.set_screen_share(is_screenshare);
 
         let (width, height, fps) = if is_screenshare {
             // Remove limit
@@ -1407,12 +1414,20 @@ fn sendVideoFrame(mut cx: FunctionContext) -> JsResult<JsValue> {
     }
     let pixel_format = pixel_format.unwrap();
 
-    let frame = VideoFrame::copy_from_slice(width, height, pixel_format, buffer.as_slice(&cx));
-    with_call_endpoint(&mut cx, |endpoint| {
+    let endpoint = cx
+        .this::<JsObject>()?
+        .get::<JsBox<RefCell<CallEndpoint>>, _, _>(&mut cx, CALL_ENDPOINT_PROPERTY_KEY)?;
+    let frame_data = buffer.as_slice(&cx);
+    let frame = VideoFrame::copy_from_slice(width, height, pixel_format, frame_data);
+    {
+        let endpoint = endpoint.borrow_mut();
+        let tap_format =
+            VideoTapFormat::from_i32(pixel_format as i32).expect("validated video pixel format");
+        endpoint
+            .video_tap
+            .push(width, height, tap_format, frame_data);
         endpoint.outgoing_video_source.push_frame(frame);
-        Ok(())
-    })
-    .or_else(|err: anyhow::Error| cx.throw_error(format!("{}", err)))?;
+    }
     Ok(cx.undefined().upcast())
 }
 
@@ -1598,6 +1613,7 @@ fn deleteGroupCallClient(mut cx: FunctionContext) -> JsResult<JsValue> {
     let client_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as group_call::ClientId;
 
     with_call_endpoint(&mut cx, |endpoint| {
+        endpoint.video_tap.reset_outgoing_state();
         endpoint.call_manager.delete_group_call_client(client_id);
         Ok(())
     })
@@ -1623,6 +1639,7 @@ fn join(mut cx: FunctionContext) -> JsResult<JsValue> {
 
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_video_track.set_content_hint(false);
+        endpoint.video_tap.set_screen_share(false);
         endpoint.call_manager.join(client_id);
         Ok(())
     })
@@ -1642,6 +1659,8 @@ fn leave(mut cx: FunctionContext) -> JsResult<JsValue> {
             .set_audio_tap_local_input_enabled(false)?;
         endpoint.outgoing_video_track.set_enabled(false);
         endpoint.outgoing_video_track.set_content_hint(false);
+        endpoint.video_tap.set_outgoing_video_enabled(false);
+        endpoint.video_tap.set_screen_share(false);
         endpoint.call_manager.leave(client_id);
         Ok(())
     })
@@ -1661,6 +1680,8 @@ fn disconnect(mut cx: FunctionContext) -> JsResult<JsValue> {
             .set_audio_tap_local_input_enabled(false)?;
         endpoint.outgoing_video_track.set_enabled(false);
         endpoint.outgoing_video_track.set_content_hint(false);
+        endpoint.video_tap.set_outgoing_video_enabled(false);
+        endpoint.video_tap.set_screen_share(false);
         endpoint.call_manager.disconnect(client_id);
         Ok(())
     })
@@ -1728,6 +1749,7 @@ fn setOutgoingVideoMuted(mut cx: FunctionContext) -> JsResult<JsValue> {
 
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_video_track.set_enabled(!muted);
+        endpoint.video_tap.set_outgoing_video_enabled(!muted);
         endpoint
             .call_manager
             .set_outgoing_video_muted(client_id, muted);
@@ -1759,6 +1781,7 @@ fn setOutgoingGroupCallVideoIsScreenShare(mut cx: FunctionContext) -> JsResult<J
         endpoint
             .outgoing_video_track
             .set_content_hint(is_screenshare);
+        endpoint.video_tap.set_screen_share(is_screenshare);
 
         let (width, height, fps) = if is_screenshare {
             // Remove limit
@@ -2429,6 +2452,77 @@ fn readAudioTap(mut cx: FunctionContext) -> JsResult<JsValue> {
         "droppedRemotePlayoutSamples",
         dropped_remote_playout,
     )?;
+    Ok(result.upcast())
+}
+
+#[allow(non_snake_case)]
+fn videoTapIsSupported(mut cx: FunctionContext) -> JsResult<JsBoolean> {
+    Ok(cx.boolean(true))
+}
+
+#[allow(non_snake_case)]
+fn videoTapVersion(mut cx: FunctionContext) -> JsResult<JsNumber> {
+    Ok(cx.number(VIDEO_TAP_API_VERSION))
+}
+
+#[allow(non_snake_case)]
+fn startVideoTap(mut cx: FunctionContext) -> JsResult<JsValue> {
+    with_call_endpoint(&mut cx, |endpoint| {
+        endpoint.video_tap.start();
+    });
+    Ok(cx.undefined().upcast())
+}
+
+#[allow(non_snake_case)]
+fn stopVideoTap(mut cx: FunctionContext) -> JsResult<JsValue> {
+    with_call_endpoint(&mut cx, |endpoint| endpoint.video_tap.stop());
+    Ok(cx.undefined().upcast())
+}
+
+#[allow(non_snake_case)]
+fn readVideoTap(mut cx: FunctionContext) -> JsResult<JsValue> {
+    let last_sequence = cx.argument::<JsNumber>(0)?.value(&mut cx);
+    if !last_sequence.is_finite()
+        || last_sequence < 0.0
+        || last_sequence.fract() != 0.0
+        || last_sequence > 9_007_199_254_740_991.0
+    {
+        return cx.throw_range_error("lastSequence must be a finite non-negative integer");
+    }
+    let event = with_call_endpoint(&mut cx, |endpoint| {
+        endpoint.video_tap.read(last_sequence as u64)
+    });
+    let Some(event) = event else {
+        return Ok(cx.undefined().upcast());
+    };
+
+    let result = cx.empty_object();
+    let (sequence, timestamp_us, active) = match &event {
+        VideoTapEvent::Inactive(event) => (event.sequence, event.timestamp_us, false),
+        VideoTapEvent::Frame(frame) => (frame.sequence, frame.timestamp_us, true),
+    };
+    let sequence = cx.number(sequence as f64);
+    result.set(&mut cx, "sequence", sequence)?;
+    let timestamp_us = cx.number(timestamp_us as f64);
+    result.set(&mut cx, "timestampUs", timestamp_us)?;
+    let active = cx.boolean(active);
+    result.set(&mut cx, "active", active)?;
+
+    if let VideoTapEvent::Frame(frame) = event {
+        let width = cx.number(frame.width);
+        result.set(&mut cx, "width", width)?;
+        let height = cx.number(frame.height);
+        result.set(&mut cx, "height", height)?;
+        let format = cx.string(match frame.format {
+            VideoTapFormat::I420 => "i420",
+            VideoTapFormat::Nv12 => "nv12",
+            VideoTapFormat::Rgba => "rgba",
+        });
+        result.set(&mut cx, "format", format)?;
+        let data = JsUint8Array::from_slice(&mut cx, &frame.data)?;
+        result.set(&mut cx, "data", data)?;
+    }
+
     Ok(result.upcast())
 }
 
@@ -3364,6 +3458,11 @@ fn register(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("cm_startAudioTap", startAudioTap)?;
     cx.export_function("cm_readAudioTap", readAudioTap)?;
     cx.export_function("cm_stopAudioTap", stopAudioTap)?;
+    cx.export_function("cm_videoTapIsSupported", videoTapIsSupported)?;
+    cx.export_function("cm_videoTapVersion", videoTapVersion)?;
+    cx.export_function("cm_startVideoTap", startVideoTap)?;
+    cx.export_function("cm_readVideoTap", readVideoTap)?;
+    cx.export_function("cm_stopVideoTap", stopVideoTap)?;
     cx.export_function("cm_setRtcStatsInterval", setRtcStatsInterval)?;
     cx.export_function("cm_processEvents", processEvents)?;
     Ok(())

@@ -17,7 +17,7 @@ const {
 
 const PACKAGE = {
   name: '@minutes/ringrtc',
-  version: '2.69.7-minutes.1',
+  version: '2.69.7-minutes.2',
   config: {
     upstreamVersion: '2.69.7',
     tapApiVersion: 1,
@@ -33,7 +33,7 @@ function manifestFor(bytes) {
     tapApiVersion: PACKAGE.config.tapApiVersion,
     targets: {
       'darwin-arm64': {
-        asset: 'minutes-ringrtc-v2.69.7-minutes.1-darwin-arm64.node',
+        asset: 'minutes-ringrtc-v2.69.7-minutes.2-darwin-arm64.node',
         sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
       },
     },
@@ -49,9 +49,9 @@ void test('selects only a checksum-pinned Minutes GitHub release addon', () => {
   });
 
   assert.deepEqual(selected, {
-    asset: 'minutes-ringrtc-v2.69.7-minutes.1-darwin-arm64.node',
+    asset: 'minutes-ringrtc-v2.69.7-minutes.2-darwin-arm64.node',
     sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
-    url: 'https://github.com/jiridudekusy/minutes-ringrtc/releases/download/v2.69.7-minutes.1/minutes-ringrtc-v2.69.7-minutes.1-darwin-arm64.node',
+    url: 'https://github.com/jiridudekusy/minutes-ringrtc/releases/download/v2.69.7-minutes.2/minutes-ringrtc-v2.69.7-minutes.2-darwin-arm64.node',
     destination: 'build/darwin/libringrtc-arm64.node',
   });
 });

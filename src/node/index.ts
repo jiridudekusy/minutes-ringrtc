@@ -17,6 +17,9 @@ export type {
   PeekInfo,
   Reaction,
   UserId,
+  VideoTapEvent,
+  VideoTapFrameEvent,
+  VideoTapInactiveEvent,
   VideoFrameSender,
   VideoFrameSource,
 } from './ringrtc/Service';
