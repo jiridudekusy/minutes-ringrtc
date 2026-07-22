@@ -6,7 +6,11 @@
 #
 
 import argparse
+import hashlib
 import json
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,6 +51,7 @@ REQUIRED_TARGET_FIELDS = frozenset(
 )
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_NODE_PACKAGE = PROJECT_DIR / "src" / "node" / "package.json"
+ADDON_VERIFIER = PROJECT_DIR / "bin" / "verify_minutes_node_addon.js"
 
 
 class ManifestError(ValueError):
@@ -74,11 +79,36 @@ def validate_manifest(manifest: Any, checksums: Any, node_package: Any) -> None:
         node_package.get("version"), str
     ):
         raise ManifestError("Node package must contain a string version")
-    ringrtc_version = manifest.get("ringrtcVersion")
-    if ringrtc_version != node_package["version"]:
+    if node_package.get("name") != "@minutes/ringrtc":
+        raise ManifestError("Node package name must be @minutes/ringrtc")
+    node_config = node_package.get("config")
+    if not isinstance(node_config, dict):
+        raise ManifestError("Node package must contain config")
+
+    package_version = manifest.get("packageVersion")
+    if package_version != node_package["version"]:
         raise ManifestError(
-            f"ringrtcVersion {ringrtc_version} does not match Node package "
+            f"packageVersion {package_version} does not match Node package "
             f"version {node_package['version']}"
+        )
+    upstream_version = manifest.get("upstreamVersion")
+    if upstream_version != node_config.get("upstreamVersion"):
+        raise ManifestError(
+            f"upstreamVersion {upstream_version} does not match Node package "
+            f"upstreamVersion {node_config.get('upstreamVersion')}"
+        )
+    tap_api_version = manifest.get("tapApiVersion")
+    if tap_api_version != node_config.get("tapApiVersion"):
+        raise ManifestError(
+            f"tapApiVersion {tap_api_version} does not match Node package "
+            f"tapApiVersion {node_config.get('tapApiVersion')}"
+        )
+    if not re.fullmatch(
+        rf"{re.escape(upstream_version)}-minutes\.[1-9][0-9]*", package_version
+    ):
+        raise ManifestError(
+            "packageVersion must be the supported Minutes semver derived from "
+            "upstreamVersion"
         )
 
     targets = manifest.get("targets")
@@ -127,7 +157,7 @@ def validate_manifest(manifest: Any, checksums: Any, node_package: Any) -> None:
                 f"target {target_name} has invalid output; expected {expected_output}"
             )
         expected_artifact_name = (
-            f"minutes-ringrtc-v{ringrtc_version}-{target['nodePlatform']}-"
+            f"minutes-ringrtc-v{package_version}-{target['nodePlatform']}-"
             f"{target['nodeArch']}"
         )
         if target["artifactName"] != expected_artifact_name:
@@ -142,7 +172,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         description="Validate Minutes RingRTC desktop artifact metadata."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("validate", "matrix", "verify-output"):
+    for command in ("validate", "matrix", "verify-output", "release-manifest"):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--manifest", required=True, type=Path)
         subparser.add_argument("--checksums", required=True, type=Path)
@@ -154,6 +184,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
                 "--target", required=True, choices=sorted(REQUIRED_TARGETS)
             )
             subparser.add_argument("--project-dir", type=Path, default=PROJECT_DIR)
+        if command == "release-manifest":
+            subparser.add_argument("--assets-dir", required=True, type=Path)
+            subparser.add_argument("--release-dir", required=True, type=Path)
+            subparser.add_argument("--output", required=True, type=Path)
     return parser
 
 
@@ -185,6 +219,53 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+        verification = subprocess.run(
+            [
+                "node",
+                str(ADDON_VERIFIER),
+                str(output),
+                str(manifest["tapApiVersion"]),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if verification.returncode != 0:
+            sys.stderr.write(verification.stderr)
+            return 1
+        return 0
+    if args.command == "release-manifest":
+        release_targets = {}
+        args.release_dir.mkdir(parents=True, exist_ok=True)
+        for target_name in sorted(REQUIRED_TARGETS):
+            target = manifest["targets"][target_name]
+            source = args.assets_dir / target["output"]
+            if not source.is_file() or source.stat().st_size == 0:
+                print(
+                    f"artifact error: missing or empty native addon: {source}",
+                    file=sys.stderr,
+                )
+                return 1
+            asset = f"{target['artifactName']}.node"
+            destination = args.release_dir / asset
+            shutil.copyfile(source, destination)
+            release_targets[
+                f"{target['nodePlatform']}-{target['nodeArch']}"
+            ] = {
+                "asset": asset,
+                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            }
+        release_manifest = {
+            "schemaVersion": 1,
+            "packageVersion": manifest["packageVersion"],
+            "upstreamVersion": manifest["upstreamVersion"],
+            "tapApiVersion": manifest["tapApiVersion"],
+            "targets": release_targets,
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(release_manifest, indent=2) + "\n", encoding="utf-8"
+        )
         return 0
     if args.command == "matrix":
         matrix = {

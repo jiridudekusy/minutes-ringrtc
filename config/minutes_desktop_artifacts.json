@@ -1,7 +1,9 @@
 {
   "schemaVersion": 1,
   "package": "@minutes/ringrtc",
-  "ringrtcVersion": "2.69.7",
+  "packageVersion": "2.69.7-minutes.1",
+  "upstreamVersion": "2.69.7",
+  "tapApiVersion": 1,
   "targets": {
     "mac-arm64": {
       "runner": "macos-14",
@@ -11,7 +13,7 @@
       "nodePlatform": "darwin",
       "nodeArch": "arm64",
       "output": "src/node/build/darwin/libringrtc-arm64.node",
-      "artifactName": "minutes-ringrtc-v2.69.7-darwin-arm64"
+      "artifactName": "minutes-ringrtc-v2.69.7-minutes.1-darwin-arm64"
     },
     "windows-x64": {
       "runner": "windows-2022",
@@ -21,7 +23,7 @@
       "nodePlatform": "win32",
       "nodeArch": "x64",
       "output": "src/node/build/win32/libringrtc-x64.node",
-      "artifactName": "minutes-ringrtc-v2.69.7-win32-x64"
+      "artifactName": "minutes-ringrtc-v2.69.7-minutes.1-win32-x64"
     }
   }
 }

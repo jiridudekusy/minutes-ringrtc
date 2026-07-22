@@ -4,33 +4,25 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - '.github/workflows/minutes_desktop_artifacts.yml'
-      - 'bin/build-desktop'
-      - 'bin/fetch-artifact*'
-      - 'bin/minutes_desktop_artifacts.py'
-      - 'bin/tests/test_minutes_desktop_artifacts.py'
-      - 'config/minutes_desktop_artifacts.json'
-      - 'config/version.*'
-      - 'config/webrtc_artifact_checksums.json'
-      - 'src/node/**'
-      - 'src/rust/**'
-      - 'webrtc-sys/**'
-      - 'Cargo.lock'
-      - 'Cargo.toml'
-      - 'rust-toolchain'
+      - ".github/workflows/minutes_desktop_artifacts.yml"
+      - "bin/build-desktop"
+      - "bin/fetch-artifact*"
+      - "bin/minutes_desktop_artifacts.py"
+      - "bin/tests/test_minutes_desktop_artifacts.py"
+      - "config/minutes_desktop_artifacts.json"
+      - "config/version.*"
+      - "config/webrtc_artifact_checksums.json"
+      - "src/node/**"
+      - "src/rust/**"
+      - "webrtc-sys/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain"
   push:
     branches:
-      - 'codex/audio-tap-build'
-    paths:
-      - '.github/workflows/minutes_desktop_artifacts.yml'
-      - 'bin/**'
-      - 'config/**'
-      - 'src/node/**'
-      - 'src/rust/**'
-      - 'webrtc-sys/**'
-      - 'Cargo.lock'
-      - 'Cargo.toml'
-      - 'rust-toolchain'
+      - "codex/audio-tap-spike"
+    tags:
+      - "v*-minutes.*"
 
 permissions:
   contents: read
@@ -48,7 +40,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: "3.11"
       - name: Test artifact manifest validation
         run: >-
           python -m unittest discover
@@ -75,7 +67,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: "3.11"
       - name: Install protoc
         uses: ./.github/actions/install-protoc
       - name: Install macOS path utilities
@@ -111,6 +103,12 @@ jobs:
           --manifest config/minutes_desktop_artifacts.json
           --checksums config/webrtc_artifact_checksums.json
           --target "${{ matrix.id }}"
+      - name: Verify versioned audio tap API export
+        shell: bash
+        run: >-
+          node bin/verify_minutes_node_addon.js
+          "${{ matrix.output }}"
+          1
       - name: Upload native addon
         uses: actions/upload-artifact@v7
         with:
@@ -122,3 +120,77 @@ jobs:
             LICENSE
           if-no-files-found: error
           retention-days: 7
+
+  package:
+    name: Assemble compatibility package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: "src/node/.nvmrc"
+          registry-url: "https://registry.npmjs.org"
+      - name: Download both native addons
+        uses: actions/download-artifact@v8
+        with:
+          pattern: minutes-ringrtc-*
+          path: staged-addons
+          merge-multiple: true
+      - name: Generate checksum-pinned release manifest
+        shell: bash
+        run: >-
+          python bin/minutes_desktop_artifacts.py release-manifest
+          --manifest config/minutes_desktop_artifacts.json
+          --checksums config/webrtc_artifact_checksums.json
+          --assets-dir staged-addons
+          --release-dir release
+          --output src/node/prebuilds.json
+      - name: Test and pack compatibility package
+        working-directory: src/node
+        shell: bash
+        run: |
+          npm ci --ignore-scripts
+          npm run test:distribution
+          npm run prepublishOnly
+          npm pack --pack-destination ../../release
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: minutes-ringrtc-release
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub release and npm package
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: "src/node/.nvmrc"
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v8
+        with:
+          name: minutes-ringrtc-release
+          path: release
+      - name: Verify release tag
+        shell: bash
+        run: |
+          package_version="$(node -p "require('./src/node/package.json').version")"
+          test "${GITHUB_REF_NAME}" = "v${package_version}"
+      - name: Create checksum-pinned GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
+      - name: Publish compatibility package
+        run: npm publish release/*.tgz --access public --provenance
