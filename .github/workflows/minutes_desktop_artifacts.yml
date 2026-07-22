@@ -1,0 +1,124 @@
+name: Build Minutes RingRTC native addons
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/minutes_desktop_artifacts.yml'
+      - 'bin/build-desktop'
+      - 'bin/fetch-artifact*'
+      - 'bin/minutes_desktop_artifacts.py'
+      - 'bin/tests/test_minutes_desktop_artifacts.py'
+      - 'config/minutes_desktop_artifacts.json'
+      - 'config/version.*'
+      - 'config/webrtc_artifact_checksums.json'
+      - 'src/node/**'
+      - 'src/rust/**'
+      - 'webrtc-sys/**'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'rust-toolchain'
+  push:
+    branches:
+      - 'codex/audio-tap-build'
+    paths:
+      - '.github/workflows/minutes_desktop_artifacts.yml'
+      - 'bin/**'
+      - 'config/**'
+      - 'src/node/**'
+      - 'src/rust/**'
+      - 'webrtc-sys/**'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'rust-toolchain'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  manifest:
+    name: Validate artifact manifest
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Test artifact manifest validation
+        run: >-
+          python -m unittest discover
+          -s bin/tests
+          -p 'test_*.py'
+          -v
+      - name: Export build matrix
+        id: matrix
+        shell: bash
+        run: |
+          matrix="$(python bin/minutes_desktop_artifacts.py matrix \
+            --manifest config/minutes_desktop_artifacts.json \
+            --checksums config/webrtc_artifact_checksums.json)"
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build ${{ matrix.id }}
+    needs: manifest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.manifest.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install protoc
+        uses: ./.github/actions/install-protoc
+      - name: Install macOS path utilities
+        if: runner.os == 'macOS'
+        run: brew install coreutils
+      - name: Install Rust target
+        shell: bash
+        run: >-
+          rustup toolchain install "$(cat rust-toolchain)"
+          --profile minimal
+          --target "${{ matrix.cargoTarget }}"
+      - name: Validate artifact metadata
+        shell: bash
+        run: >-
+          python bin/minutes_desktop_artifacts.py validate
+          --manifest config/minutes_desktop_artifacts.json
+          --checksums config/webrtc_artifact_checksums.json
+      - name: Fetch checksum-verified upstream WebRTC prebuild
+        shell: bash
+        run: >-
+          bash bin/fetch-artifact
+          --platform "${{ matrix.webrtcPlatform }}"
+          --release
+      - name: Build RingRTC native Node addon
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.targetArch }}
+        run: bash bin/build-desktop --ringrtc-only --release
+      - name: Verify native addon
+        shell: bash
+        run: >-
+          python bin/minutes_desktop_artifacts.py verify-output
+          --manifest config/minutes_desktop_artifacts.json
+          --checksums config/webrtc_artifact_checksums.json
+          --target "${{ matrix.id }}"
+      - name: Upload native addon
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifactName }}
+          path: |
+            ${{ matrix.output }}
+            config/minutes_desktop_artifacts.json
+            config/webrtc_artifact_checksums.json
+            LICENSE
+          if-no-files-found: error
+          retention-days: 7
