@@ -133,7 +133,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: "src/node/.nvmrc"
-          registry-url: "https://registry.npmjs.org"
       - name: Download both native addons
         uses: actions/download-artifact@v8
         with:
@@ -154,6 +153,7 @@ jobs:
         shell: bash
         run: |
           npm ci --ignore-scripts
+          npm run build
           npm run test:distribution
           npm run prepublishOnly
           npm pack --pack-destination ../../release
@@ -166,19 +166,17 @@ jobs:
           retention-days: 7
 
   release:
-    name: Publish GitHub release and npm package
+    name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: package
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: "src/node/.nvmrc"
-          registry-url: "https://registry.npmjs.org"
       - uses: actions/download-artifact@v8
         with:
           name: minutes-ringrtc-release
@@ -188,10 +186,13 @@ jobs:
         run: |
           package_version="$(node -p "require('./src/node/package.json').version")"
           test "${GITHUB_REF_NAME}" = "v${package_version}"
-      - name: Create checksum-pinned GitHub release
+      - name: Create or refresh checksum-pinned GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
-      - name: Publish compatibility package
-        if: vars.MINUTES_NPM_PUBLISH == 'true'
-        run: npm publish release/*.tgz --access public --provenance
+        shell: bash
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" release/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
+          fi

@@ -379,10 +379,13 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
 
         self.assertIn("node bin/verify_minutes_node_addon.js", workflow)
         self.assertIn("release-manifest", workflow)
+        self.assertIn("npm run build", workflow)
         self.assertIn("npm pack", workflow)
-        self.assertIn("npm publish", workflow)
-        self.assertIn("if: vars.MINUTES_NPM_PUBLISH == 'true'", workflow)
+        self.assertNotIn("npm publish", workflow)
+        self.assertNotIn("id-token: write", workflow)
         self.assertIn("gh release create", workflow)
+        self.assertIn("gh release upload", workflow)
+        self.assertIn("--clobber", workflow)
         self.assertIn("actions/download-artifact@v8", workflow)
 
 
