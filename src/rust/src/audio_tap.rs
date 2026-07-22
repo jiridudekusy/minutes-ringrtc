@@ -53,6 +53,8 @@ pub struct AudioTap {
     buffers: Mutex<Buffers>,
     dropped_local_input: AtomicU64,
     dropped_remote_playout: AtomicU64,
+    pending_local_input_gap: AtomicU64,
+    pending_remote_playout_gap: AtomicU64,
 }
 
 impl AudioTap {
@@ -65,6 +67,8 @@ impl AudioTap {
             buffers: Mutex::new(Buffers::default()),
             dropped_local_input: AtomicU64::new(0),
             dropped_remote_playout: AtomicU64::new(0),
+            pending_local_input_gap: AtomicU64::new(0),
+            pending_remote_playout_gap: AtomicU64::new(0),
         }
     }
 
@@ -78,6 +82,8 @@ impl AudioTap {
         }
         self.dropped_local_input.store(0, Ordering::Relaxed);
         self.dropped_remote_playout.store(0, Ordering::Relaxed);
+        self.pending_local_input_gap.store(0, Ordering::Relaxed);
+        self.pending_remote_playout_gap.store(0, Ordering::Relaxed);
         self.active.store(true, Ordering::Release);
     }
 
@@ -98,6 +104,7 @@ impl AudioTap {
 
         let dropped = match self.buffers.try_lock() {
             Ok(mut buffers) => {
+                self.apply_pending_gap(source, &mut buffers);
                 let dropped = match source {
                     AudioTapSource::LocalInput => append_bounded(
                         &mut buffers.local_input,
@@ -120,7 +127,11 @@ impl AudioTap {
                 }
                 dropped
             }
-            Err(_) => samples.len() as u64,
+            Err(_) => {
+                self.pending_gap_counter(source)
+                    .fetch_add(samples.len() as u64, Ordering::Relaxed);
+                samples.len() as u64
+            }
         };
 
         if dropped > 0 {
@@ -179,6 +190,36 @@ impl AudioTap {
         }
     }
 
+    fn pending_gap_counter(&self, source: AudioTapSource) -> &AtomicU64 {
+        match source {
+            AudioTapSource::LocalInput => &self.pending_local_input_gap,
+            AudioTapSource::RemotePlayout => &self.pending_remote_playout_gap,
+        }
+    }
+
+    fn apply_pending_gap(&self, source: AudioTapSource, buffers: &mut Buffers) {
+        let pending_gap = self.pending_gap_counter(source).swap(0, Ordering::AcqRel);
+        if pending_gap == 0 {
+            return;
+        }
+
+        let (buffer, start_sample) = match source {
+            AudioTapSource::LocalInput => (
+                &mut buffers.local_input,
+                &mut buffers.local_input_start_sample,
+            ),
+            AudioTapSource::RemotePlayout => (
+                &mut buffers.remote_playout,
+                &mut buffers.remote_playout_start_sample,
+            ),
+        };
+        let discarded_buffered_samples = buffer.len() as u64;
+        buffer.clear();
+        *start_sample += discarded_buffered_samples + pending_gap;
+        self.dropped_counter(source)
+            .fetch_add(discarded_buffered_samples, Ordering::Relaxed);
+    }
+
     fn push_silence(&self, source: AudioTapSource, sample_count: usize) {
         if sample_count == 0 || !self.is_active() {
             return;
@@ -186,6 +227,7 @@ impl AudioTap {
 
         let dropped = match self.buffers.try_lock() {
             Ok(mut buffers) => {
+                self.apply_pending_gap(source, &mut buffers);
                 let dropped = match source {
                     AudioTapSource::LocalInput => append_silence_bounded(
                         &mut buffers.local_input,
@@ -208,7 +250,11 @@ impl AudioTap {
                 }
                 dropped
             }
-            Err(_) => sample_count as u64,
+            Err(_) => {
+                self.pending_gap_counter(source)
+                    .fetch_add(sample_count as u64, Ordering::Relaxed);
+                sample_count as u64
+            }
         };
         if dropped > 0 {
             self.dropped_counter(source)
@@ -253,4 +299,26 @@ pub fn pcm_i16_to_le_bytes(samples: Vec<i16>) -> Vec<u8> {
         .into_iter()
         .flat_map(i16::to_le_bytes)
         .collect::<Vec<_>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AudioTap, AudioTapSource};
+
+    #[test]
+    fn lock_contention_is_represented_as_a_gap_in_sample_offsets() {
+        let tap = AudioTap::new(16);
+        tap.start();
+        tap.push(AudioTapSource::RemotePlayout, &[1, 2]);
+
+        let guard = tap.buffers.lock().expect("tap buffers");
+        tap.push(AudioTapSource::RemotePlayout, &[3, 4]);
+        drop(guard);
+        tap.push(AudioTapSource::RemotePlayout, &[5, 6]);
+
+        let chunk = tap.drain(16);
+        assert_eq!(chunk.remote_playout, vec![5, 6]);
+        assert_eq!(chunk.remote_playout_start_sample, 4);
+        assert_eq!(chunk.dropped_remote_playout, 4);
+    }
 }
