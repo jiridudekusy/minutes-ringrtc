@@ -26,6 +26,7 @@ use regex::Regex;
 use windows::Win32::System::Com;
 
 use crate::{
+    audio_tap::{AudioTap, AudioTapChunk, AudioTapSource},
     webrtc,
     webrtc::{
         audio_device_module_utils::{
@@ -119,6 +120,7 @@ struct Worker {
     send_to_webrtc: Arc<AtomicBool>,
     should_play: bool,
     should_record: bool,
+    audio_tap: Arc<AudioTap>,
 }
 
 impl Worker {
@@ -305,6 +307,7 @@ impl Worker {
         // if `output.len()` is not an exact multiple of WEBRTC_WINDOW.
         let mut buffer = VecDeque::<i16>::new();
         buffer.reserve(WEBRTC_WINDOW);
+        let audio_tap = self.audio_tap.clone();
         builder
             .name("ringrtc output")
             .output(out_device, &params)
@@ -345,6 +348,7 @@ impl Worker {
                         warn!("need_more_play_data returned no data; short-circuiting");
                         break;
                     }
+                    audio_tap.push(AudioTapSource::RemotePlayout, &play_data.data);
                     // Put data into the right format and add it to the output
                     // array for cubeb to play.
                     // If there's more data than was requested, add it to the
@@ -468,6 +472,7 @@ impl Worker {
         // if `input.len()` is not an exact multiple of WEBRTC_WINDOW.
         let mut buffer = VecDeque::<i16>::new();
         let send_to_webrtc = self.send_to_webrtc.clone();
+        let audio_tap = self.audio_tap.clone();
         buffer.reserve(WEBRTC_WINDOW);
         builder
             .name("ringrtc input")
@@ -493,6 +498,7 @@ impl Worker {
                         buffer.extend(chunk);
                         break;
                     }
+                    audio_tap.push_local_input(chunk);
                     let (ret, _new_mic_level) = Worker::recorded_data_is_available(
                         chunk.to_vec(),
                         NUM_CHANNELS,
@@ -814,6 +820,7 @@ impl Worker {
         playout_delay_sender: mpsc::Sender<anyhow::Result<u16>>,
         input_device_names: Arc<Mutex<Vec<Option<AudioDevice>>>>,
         output_device_names: Arc<Mutex<Vec<Option<AudioDevice>>>>,
+        audio_tap: Arc<AudioTap>,
     ) -> JoinHandle<()> {
         thread::spawn(move || {
             #[cfg(target_os = "windows")]
@@ -870,6 +877,7 @@ impl Worker {
                 send_to_webrtc: Arc::new(AtomicBool::new(true)),
                 should_play: false,
                 should_record: false,
+                audio_tap,
             };
             if let Err(e) = worker.register_device_collection_changed(DeviceType::INPUT) {
                 error!("Failed to register input device callback: {}", e);
@@ -936,6 +944,7 @@ pub struct AudioDeviceModule {
     cubeb_worker: Option<JoinHandle<()>>,
     mpsc_sender: mpsc::Sender<Event>,
     playout_delay_receiver: mpsc::Receiver<anyhow::Result<u16>>,
+    audio_tap: Arc<AudioTap>,
 }
 
 impl Drop for AudioDeviceModule {
@@ -974,6 +983,7 @@ const WEBRTC_WINDOW: usize = SAMPLE_FREQUENCY as usize / 100;
 
 const STREAM_FORMAT: cubeb::SampleFormat = cubeb::SampleFormat::S16NE;
 const NUM_CHANNELS: u32 = 1;
+const AUDIO_TAP_CAPACITY_SAMPLES_PER_SOURCE: usize = SAMPLE_FREQUENCY as usize * 5;
 
 fn write_to_null_or_valid_pointer<T>(
     mut ptr: webrtc::ptr::Borrowed<T>,
@@ -1091,6 +1101,7 @@ impl AudioDeviceModule {
         let (sender, receiver) = mpsc::channel();
         let (started_sender, started_receiver) = mpsc::channel();
         let (playout_delay_sender, playout_delay_receiver) = mpsc::channel();
+        let audio_tap = Arc::new(AudioTap::new(AUDIO_TAP_CAPACITY_SAMPLES_PER_SOURCE));
         let cubeb_worker = Worker::spawn(
             started_sender,
             receiver,
@@ -1098,6 +1109,7 @@ impl AudioDeviceModule {
             playout_delay_sender,
             input_device_names.clone(),
             output_device_names.clone(),
+            audio_tap.clone(),
         );
 
         // Ensure the thread started correctly
@@ -1122,7 +1134,24 @@ impl AudioDeviceModule {
             cubeb_worker: Some(cubeb_worker),
             mpsc_sender: sender,
             playout_delay_receiver,
+            audio_tap,
         })
+    }
+
+    pub fn start_audio_tap(&self) {
+        self.audio_tap.start();
+    }
+
+    pub fn stop_audio_tap(&self) {
+        self.audio_tap.stop();
+    }
+
+    pub fn drain_audio_tap(&self, max_samples_per_source: usize) -> AudioTapChunk {
+        self.audio_tap.drain(max_samples_per_source)
+    }
+
+    pub fn set_audio_tap_local_input_enabled(&self, enabled: bool) {
+        self.audio_tap.set_local_input_enabled(enabled);
     }
 
     pub fn active_audio_layer(&self, _audio_layer: webrtc::ptr::Borrowed<AudioLayer>) -> i32 {

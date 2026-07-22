@@ -6,6 +6,7 @@
 import { RingRTCType } from './ringrtc/Service';
 
 export type {
+  AudioTapChunk,
   AudioDevice,
   CallId,
   CallSettings,
