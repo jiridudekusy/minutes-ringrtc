@@ -6,14 +6,16 @@ on:
     paths:
       - ".github/workflows/minutes_desktop_artifacts.yml"
       - "bin/build-desktop"
-      - "bin/fetch-artifact*"
+      - "bin/apply-webrtc-patches.py"
+      - "bin/gsync-webrtc"
       - "bin/minutes_desktop_artifacts.py"
-      - "bin/tests/test_minutes_desktop_artifacts.py"
+      - "bin/tests/**"
       - "config/minutes_desktop_artifacts.json"
       - "config/version.*"
       - "config/webrtc_artifact_checksums.json"
       - "src/node/**"
       - "src/rust/**"
+      - "patches/webrtc/**"
       - "webrtc-sys/**"
       - "Cargo.lock"
       - "Cargo.toml"
@@ -64,6 +66,13 @@ jobs:
       matrix: ${{ fromJSON(needs.manifest.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Configure Windows Git checkout
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          git config --global core.filemode false
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
@@ -73,6 +82,12 @@ jobs:
       - name: Install macOS path utilities
         if: runner.os == 'macOS'
         run: brew install coreutils
+      - name: Install Windows SDK
+        if: runner.os == 'Windows'
+        uses: ChristopheLav/windows-sdk-install@v1
+        with:
+          version-sdk: 26100
+          features: 'OptionId.WindowsDesktopDebuggers'
       - name: Install Rust target
         shell: bash
         run: >-
@@ -85,17 +100,28 @@ jobs:
           python bin/minutes_desktop_artifacts.py validate
           --manifest config/minutes_desktop_artifacts.json
           --checksums config/webrtc_artifact_checksums.json
-      - name: Fetch checksum-verified upstream WebRTC prebuild
+      - name: Install Chromium depot_tools
         shell: bash
-        run: >-
-          bash bin/fetch-artifact
-          --platform "${{ matrix.webrtcPlatform }}"
-          --release
-      - name: Build RingRTC native Node addon
+        run: |
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git out/depot_tools
+          echo "${PWD}/out/depot_tools" >> "${GITHUB_PATH}"
+      - name: Prepare patched WebRTC workspace (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash bin/prepare-workspace mac
+      - name: Prepare patched WebRTC workspace (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bash bin/prepare-workspace windows
+      - name: Build patched WebRTC, run its tap test, and build native addon
         shell: bash
         env:
           TARGET_ARCH: ${{ matrix.targetArch }}
-        run: bash bin/build-desktop --ringrtc-only --release
+        run: >-
+          bash bin/build-desktop
+          --release
+          --no-call-sim-cli
+          --test-processed-audio-frame-processor
       - name: Verify native addon
         shell: bash
         run: >-

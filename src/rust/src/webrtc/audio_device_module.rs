@@ -472,7 +472,6 @@ impl Worker {
         // if `input.len()` is not an exact multiple of WEBRTC_WINDOW.
         let mut buffer = VecDeque::<i16>::new();
         let send_to_webrtc = self.send_to_webrtc.clone();
-        let audio_tap = self.audio_tap.clone();
         buffer.reserve(WEBRTC_WINDOW);
         builder
             .name("ringrtc input")
@@ -498,7 +497,6 @@ impl Worker {
                         buffer.extend(chunk);
                         break;
                     }
-                    audio_tap.push_local_input(chunk);
                     let (ret, _new_mic_level) = Worker::recorded_data_is_available(
                         chunk.to_vec(),
                         NUM_CHANNELS,
@@ -1154,6 +1152,26 @@ impl AudioDeviceModule {
         self.audio_tap.set_local_input_enabled(enabled);
     }
 
+    pub fn audio_tap_is_active(&self) -> bool {
+        self.audio_tap.is_active()
+    }
+
+    pub fn push_processed_local_audio(
+        &self,
+        samples: webrtc::ptr::Borrowed<i16>,
+        sample_count: usize,
+    ) -> bool {
+        if samples.is_null() || sample_count == 0 {
+            return false;
+        }
+
+        // Safety: WebRTC owns this buffer and guarantees that it contains
+        // `sample_count` samples for the duration of this synchronous callback.
+        let samples = unsafe { std::slice::from_raw_parts(samples.as_ptr(), sample_count) };
+        push_processed_local_audio_to_tap(&self.audio_tap, samples);
+        true
+    }
+
     pub fn active_audio_layer(&self, _audio_layer: webrtc::ptr::Borrowed<AudioLayer>) -> i32 {
         -1
     }
@@ -1739,9 +1757,32 @@ impl AudioDeviceModule {
     }
 }
 
+fn push_processed_local_audio_to_tap(audio_tap: &AudioTap, samples: &[i16]) {
+    audio_tap.push_local_input(samples);
+}
+
 #[cfg(test)]
 mod audio_device_module_tests {
-    use crate::webrtc::audio_device_module::AudioDeviceModule;
+    use std::sync::Arc;
+
+    use crate::{
+        audio_tap::AudioTap,
+        webrtc::audio_device_module::{AudioDeviceModule, push_processed_local_audio_to_tap},
+    };
+
+    #[test]
+    fn processed_local_audio_callback_is_the_only_local_tap_writer() {
+        let tap = Arc::new(AudioTap::new(8));
+        tap.start();
+        tap.set_local_input_enabled(true);
+
+        // Raw ADM capture is intentionally not written to the tap. The only
+        // local writer is the post-APM callback exercised below.
+        let processed = [11, 12, 13, 14];
+        push_processed_local_audio_to_tap(&tap, &processed);
+
+        assert_eq!(tap.drain(usize::MAX).local_input, processed);
+    }
 
     #[test]
     fn init_backend_id() {

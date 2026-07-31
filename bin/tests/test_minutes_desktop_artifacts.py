@@ -29,7 +29,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
         return {
             "schemaVersion": 1,
             "package": "@minutes/ringrtc",
-            "packageVersion": "2.69.7-minutes.2",
+            "packageVersion": "2.69.7-minutes.3",
             "upstreamVersion": "2.69.7",
             "tapApiVersion": 1,
             "targets": {
@@ -42,7 +42,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
                     "nodeArch": "arm64",
                     "output": "src/node/build/darwin/libringrtc-arm64.node",
                     "artifactName": (
-                        "minutes-ringrtc-v2.69.7-minutes.2-darwin-arm64"
+                        "minutes-ringrtc-v2.69.7-minutes.3-darwin-arm64"
                     ),
                 },
                 "windows-x64": {
@@ -54,7 +54,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
                     "nodeArch": "x64",
                     "output": "src/node/build/win32/libringrtc-x64.node",
                     "artifactName": (
-                        "minutes-ringrtc-v2.69.7-minutes.2-win32-x64"
+                        "minutes-ringrtc-v2.69.7-minutes.3-win32-x64"
                     ),
                 },
             },
@@ -185,7 +185,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
         self.assertEqual(
             result.stderr,
             "manifest error: packageVersion 9.9.9 does not match Node package "
-            "version 2.69.7-minutes.2\n",
+            "version 2.69.7-minutes.3\n",
         )
 
     def test_rejects_manifest_with_wrong_audio_tap_api_version(self) -> None:
@@ -281,7 +281,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
         package = json.loads(NODE_PACKAGE.read_text(encoding="utf-8"))
 
         self.assertEqual(package["name"], "@minutes/ringrtc")
-        self.assertEqual(package["version"], "2.69.7-minutes.2")
+        self.assertEqual(package["version"], "2.69.7-minutes.3")
         self.assertEqual(package["config"]["upstreamVersion"], "2.69.7")
         self.assertEqual(package["config"]["tapApiVersion"], 1)
         self.assertEqual(
@@ -439,6 +439,9 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
     def test_workflow_verifies_and_packages_both_release_addons(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
+        self.assertIn("bin/prepare-workspace", workflow)
+        self.assertIn("--test-processed-audio-frame-processor", workflow)
+        self.assertNotIn("bin/fetch-artifact", workflow)
         self.assertIn("node bin/verify_minutes_node_addon.js", workflow)
         self.assertIn("release-manifest", workflow)
         self.assertIn("npm run build", workflow)

@@ -35,3 +35,7 @@ echo "CONFIGURED_WEBRTC_VERSION=${WEBRTC_VERSION}" > "${OUTPUT_DIR}/webrtc-versi
  cd "$WEBRTC_DIR"
  gclient sync --no-history --jobs 32 --with_tags "--revision=src@${WEBRTC_VERSION}"
 )
+
+python3 "$BIN_DIR/apply-webrtc-patches.py" \
+    --source "$WEBRTC_SRC_DIR" \
+    --patch-dir "$PATCH_DIR"

@@ -10,23 +10,23 @@ const { validatePrepublish } = require('./prepublish.js');
 
 const PACKAGE = {
   name: '@minutes/ringrtc',
-  version: '2.69.7-minutes.2',
+  version: '2.69.7-minutes.3',
   config: { upstreamVersion: '2.69.7', tapApiVersion: 1 },
 };
 
 function validManifest() {
   return {
     schemaVersion: 1,
-    packageVersion: '2.69.7-minutes.2',
+    packageVersion: '2.69.7-minutes.3',
     upstreamVersion: '2.69.7',
     tapApiVersion: 1,
     targets: {
       'darwin-arm64': {
-        asset: 'minutes-ringrtc-v2.69.7-minutes.2-darwin-arm64.node',
+        asset: 'minutes-ringrtc-v2.69.7-minutes.3-darwin-arm64.node',
         sha256: 'a'.repeat(64),
       },
       'win32-x64': {
-        asset: 'minutes-ringrtc-v2.69.7-minutes.2-win32-x64.node',
+        asset: 'minutes-ringrtc-v2.69.7-minutes.3-win32-x64.node',
         sha256: 'b'.repeat(64),
       },
     },

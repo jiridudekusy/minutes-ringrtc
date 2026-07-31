@@ -1,3 +1,6 @@
 # Prevent auto-merging of generated acknowledgment files
 acknowledgments/acknowledgments.* -merge -text
 acknowledgments/acknowledgments.*.hbs merge text=auto
+
+# Unified diffs require a single-space marker for blank context lines.
+patches/webrtc/*.patch -whitespace

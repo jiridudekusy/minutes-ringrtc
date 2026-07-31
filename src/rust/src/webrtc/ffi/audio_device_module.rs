@@ -94,6 +94,10 @@ macro_rules! all_adm_functions {
 
             // Playout delay
             playout_delay(delay_ms: webrtc::ptr::Borrowed<u16>) -> i32;
+
+            // Processed local capture, after WebRTC audio processing.
+            audio_tap_is_active() -> bool;
+            push_processed_local_audio(samples: webrtc::ptr::Borrowed<i16>, sample_count: size_t) -> bool;
         );
     }
 }

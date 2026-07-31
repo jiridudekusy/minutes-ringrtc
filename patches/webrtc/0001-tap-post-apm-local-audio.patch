@@ -1,0 +1,291 @@
+diff --git a/ringrtc/rffi/BUILD.gn b/ringrtc/rffi/BUILD.gn
+--- a/ringrtc/rffi/BUILD.gn
++++ b/ringrtc/rffi/BUILD.gn
+@@ -85,7 +85,10 @@ if (is_linux || is_mac || is_win) {
+   rtc_library("libringrtc_rffi") {
+     visibility = [ "*" ]
+ 
+-    sources = common_sources
++    sources = common_sources + [
++      "src/processed_audio_frame_processor.cc",
++      "src/processed_audio_frame_processor.h",
++    ]
+ 
+     configs += [ ":ringrtc_rffi_config" ]
+ 
+@@ -94,9 +97,24 @@ if (is_linux || is_mac || is_win) {
+     allow_poison = [ "environment_construction" ]
+ 
+     deps = [
++      "//api/audio:audio_frame_api",
++      "//api/audio:audio_frame_processor",
++      "//audio",
+       "//api:field_trials",
+       "//sdk:media_constraints",
+       "//media:rtc_simulcast_encoder_adapter",
+     ]
+   }
++
++  if (rtc_include_tests) {
++    rtc_test("ringrtc_rffi_unittests") {
++      sources = [ "src/processed_audio_frame_processor_unittest.cc" ]
++      configs += [ ":ringrtc_rffi_config" ]
++      deps = [
++        ":libringrtc_rffi",
++        "//api/audio:audio_frame_api",
++        "//test:test_support",
++      ]
++    }
++  }
+ }
+diff --git a/ringrtc/rffi/api/audio_device_intf.h b/ringrtc/rffi/api/audio_device_intf.h
+--- a/ringrtc/rffi/api/audio_device_intf.h
++++ b/ringrtc/rffi/api/audio_device_intf.h
+@@ -116,6 +116,12 @@ typedef struct {
+ 
+   // Playout delay
+   int32_t (*playoutDelay)(void* adm_borrowed, uint16_t* delayMS);
++
++  // Local capture after WebRTC audio processing (AEC/NS/AGC/HPF).
++  bool (*audioTapIsActive)(void* adm_borrowed);
++  bool (*pushProcessedLocalAudio)(void* adm_borrowed,
++                                  const int16_t* samples,
++                                  size_t sample_count);
+ } AudioDeviceCallbacks;
+ 
+ #endif  // RFFI_API_AUDIO_DEVICE_INTF_H__
+diff --git a/ringrtc/rffi/src/peer_connection_factory.cc b/ringrtc/rffi/src/peer_connection_factory.cc
+--- a/ringrtc/rffi/src/peer_connection_factory.cc
++++ b/ringrtc/rffi/src/peer_connection_factory.cc
+@@ -32,6 +32,9 @@
+ #include "rffi/api/peer_connection_observer_intf.h"
+ #include "rffi/src/audio_device.h"
+ #include "rffi/src/peer_connection_observer.h"
++#if !defined(WEBRTC_IOS) && !defined(WEBRTC_ANDROID)
++#include "rffi/src/processed_audio_frame_processor.h"
++#endif
+ #include "rffi/src/ptr.h"
+ #include "rffi/src/rtp_observer.h"
+ #include "rtc_base/log_sinks.h"
+@@ -162,6 +165,10 @@ class PeerConnectionFactoryWithOwnedThreads
+     auto builder = std::make_unique<BuiltinAudioProcessingBuilder>();
+     builder->SetConfig(config);
+     dependencies.audio_processing_builder = std::move(builder);
++    dependencies.audio_frame_processor =
++        std::make_unique<ProcessedAudioFrameProcessor>(
++            audio_config_borrowed->rust_adm_borrowed,
++            audio_config_borrowed->rust_audio_device_callbacks);
+     dependencies.audio_mixer = AudioMixerImpl::Create();
+ 
+     dependencies.video_encoder_factory =
+diff --git a/ringrtc/rffi/src/processed_audio_frame_processor.cc b/ringrtc/rffi/src/processed_audio_frame_processor.cc
+new file mode 100644
+--- /dev/null
++++ b/ringrtc/rffi/src/processed_audio_frame_processor.cc
+@@ -0,0 +1,61 @@
++/*
++ * Copyright 2026 Minutes contributors
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++#include "rffi/src/processed_audio_frame_processor.h"
++
++#include <utility>
++
++#include "api/audio/audio_frame.h"
++#include "audio/remix_resample.h"
++
++namespace webrtc {
++namespace rffi {
++
++namespace {
++
++constexpr int kTapSampleRateHz = 48000;
++constexpr size_t kTapChannelCount = 1;
++
++}  // namespace
++
++ProcessedAudioFrameProcessor::ProcessedAudioFrameProcessor(
++    void* rust_adm_borrowed,
++    AudioDeviceCallbacks* callbacks)
++    : rust_adm_borrowed_(rust_adm_borrowed), callbacks_(callbacks) {}
++
++void ProcessedAudioFrameProcessor::Process(std::unique_ptr<AudioFrame> frame) {
++  if (!frame) {
++    return;
++  }
++
++  if (callbacks_ && callbacks_->audioTapIsActive &&
++      callbacks_->pushProcessedLocalAudio &&
++      callbacks_->audioTapIsActive(rust_adm_borrowed_)) {
++    std::lock_guard<std::mutex> lock(processing_mutex_);
++    AudioFrame tap_frame(kTapSampleRateHz, kTapChannelCount);
++    voe::RemixAndResample(*frame, &resampler_, &tap_frame);
++    callbacks_->pushProcessedLocalAudio(
++        rust_adm_borrowed_, tap_frame.data(),
++        tap_frame.samples_per_channel() * tap_frame.num_channels());
++  }
++
++  OnAudioFrameCallback sink_callback;
++  {
++    std::lock_guard<std::mutex> lock(sink_mutex_);
++    sink_callback = sink_callback_;
++  }
++  if (sink_callback) {
++    sink_callback(std::move(frame));
++  }
++}
++
++void ProcessedAudioFrameProcessor::SetSink(
++    OnAudioFrameCallback sink_callback) {
++  std::lock_guard<std::mutex> lock(sink_mutex_);
++  sink_callback_ = std::move(sink_callback);
++}
++
++}  // namespace rffi
++}  // namespace webrtc
+diff --git a/ringrtc/rffi/src/processed_audio_frame_processor.h b/ringrtc/rffi/src/processed_audio_frame_processor.h
+new file mode 100644
+--- /dev/null
++++ b/ringrtc/rffi/src/processed_audio_frame_processor.h
+@@ -0,0 +1,43 @@
++/*
++ * Copyright 2026 Minutes contributors
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++#ifndef RFFI_SRC_PROCESSED_AUDIO_FRAME_PROCESSOR_H__
++#define RFFI_SRC_PROCESSED_AUDIO_FRAME_PROCESSOR_H__
++
++#include <memory>
++#include <mutex>
++
++#include "api/audio/audio_frame_processor.h"
++#include "common_audio/resampler/include/push_resampler.h"
++#include "rffi/api/audio_device_intf.h"
++
++namespace webrtc {
++namespace rffi {
++
++// Copies the post-APM capture stream to the Rust audio tap while forwarding
++// the original frame to WebRTC unchanged.
++class ProcessedAudioFrameProcessor final : public AudioFrameProcessor {
++ public:
++  ProcessedAudioFrameProcessor(void* rust_adm_borrowed,
++                               AudioDeviceCallbacks* callbacks);
++
++  void Process(std::unique_ptr<AudioFrame> frame) override;
++  void SetSink(OnAudioFrameCallback sink_callback) override;
++
++ private:
++  void* const rust_adm_borrowed_;
++  AudioDeviceCallbacks* const callbacks_;
++
++  std::mutex processing_mutex_;
++  PushResampler<int16_t> resampler_;
++
++  std::mutex sink_mutex_;
++  OnAudioFrameCallback sink_callback_;
++};
++
++}  // namespace rffi
++}  // namespace webrtc
++
++#endif  // RFFI_SRC_PROCESSED_AUDIO_FRAME_PROCESSOR_H__
+diff --git a/ringrtc/rffi/src/processed_audio_frame_processor_unittest.cc b/ringrtc/rffi/src/processed_audio_frame_processor_unittest.cc
+new file mode 100644
+--- /dev/null
++++ b/ringrtc/rffi/src/processed_audio_frame_processor_unittest.cc
+@@ -0,0 +1,92 @@
++/*
++ * Copyright 2026 Minutes contributors
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++#include "rffi/src/processed_audio_frame_processor.h"
++
++#include <algorithm>
++#include <cstdint>
++#include <memory>
++#include <vector>
++
++#include "api/audio/audio_frame.h"
++#include "test/gtest.h"
++
++namespace webrtc {
++namespace rffi {
++namespace {
++
++struct FakeTap {
++  bool active = true;
++  int calls = 0;
++  std::vector<int16_t> samples;
++};
++
++bool TapIsActive(void* borrowed) {
++  return static_cast<FakeTap*>(borrowed)->active;
++}
++
++bool PushProcessedAudio(void* borrowed,
++                        const int16_t* samples,
++                        size_t sample_count) {
++  auto* tap = static_cast<FakeTap*>(borrowed);
++  ++tap->calls;
++  tap->samples.assign(samples, samples + sample_count);
++  return true;
++}
++
++AudioDeviceCallbacks MakeCallbacks() {
++  AudioDeviceCallbacks callbacks = {};
++  callbacks.audioTapIsActive = TapIsActive;
++  callbacks.pushProcessedLocalAudio = PushProcessedAudio;
++  return callbacks;
++}
++
++std::unique_ptr<AudioFrame> MakeFrame() {
++  auto frame = std::make_unique<AudioFrame>(16000, 1);
++  std::fill(frame->mutable_data(),
++            frame->mutable_data() + frame->samples_per_channel(), 123);
++  return frame;
++}
++
++TEST(ProcessedAudioFrameProcessorTest, CopiesNormalizedAudioAndForwardsFrame) {
++  FakeTap tap;
++  AudioDeviceCallbacks callbacks = MakeCallbacks();
++  ProcessedAudioFrameProcessor processor(&tap, &callbacks);
++
++  AudioFrame* original = nullptr;
++  int forwarded = 0;
++  processor.SetSink([&](std::unique_ptr<AudioFrame> frame) {
++    EXPECT_EQ(frame.get(), original);
++    ++forwarded;
++  });
++
++  auto frame = MakeFrame();
++  original = frame.get();
++  processor.Process(std::move(frame));
++
++  EXPECT_EQ(tap.calls, 1);
++  EXPECT_EQ(tap.samples.size(), 480u);
++  EXPECT_EQ(forwarded, 1);
++}
++
++TEST(ProcessedAudioFrameProcessorTest, DoesNoTapWorkWhenInactive) {
++  FakeTap tap;
++  tap.active = false;
++  AudioDeviceCallbacks callbacks = MakeCallbacks();
++  ProcessedAudioFrameProcessor processor(&tap, &callbacks);
++
++  int forwarded = 0;
++  processor.SetSink(
++      [&](std::unique_ptr<AudioFrame>) { ++forwarded; });
++  processor.Process(MakeFrame());
++
++  EXPECT_EQ(tap.calls, 0);
++  EXPECT_TRUE(tap.samples.empty());
++  EXPECT_EQ(forwarded, 1);
++}
++
++}  // namespace
++}  // namespace rffi
++}  // namespace webrtc
