@@ -13,13 +13,14 @@ diff --git a/ringrtc/rffi/BUILD.gn b/ringrtc/rffi/BUILD.gn
  
      configs += [ ":ringrtc_rffi_config" ]
  
-@@ -94,9 +97,24 @@ if (is_linux || is_mac || is_win) {
+@@ -94,9 +97,27 @@ if (is_linux || is_mac || is_win) {
      allow_poison = [ "environment_construction" ]
  
      deps = [
 +      "//api/audio:audio_frame_api",
 +      "//api/audio:audio_frame_processor",
 +      "//audio",
++      "//common_audio",
        "//api:field_trials",
        "//sdk:media_constraints",
        "//media:rtc_simulcast_encoder_adapter",
@@ -33,6 +34,8 @@ diff --git a/ringrtc/rffi/BUILD.gn b/ringrtc/rffi/BUILD.gn
 +      deps = [
 +        ":libringrtc_rffi",
 +        "//api/audio:audio_frame_api",
++        "//api/audio:audio_frame_processor",
++        "//common_audio",
 +        "//test:test_support",
 +      ]
 +    }
