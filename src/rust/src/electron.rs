@@ -24,6 +24,9 @@ use neon::{
 use strum::IntoDiscriminant;
 
 use crate::{
+    audio_tap::{
+        AUDIO_TAP_API_VERSION, AUDIO_TAP_CHANNELS, AUDIO_TAP_SAMPLE_RATE, pcm_i16_to_le_bytes,
+    },
     common::{CallConfig, CallId, CallMediaType, DataMode, DeviceId, Result},
     core::{
         assets::AssetHandle,
@@ -1315,6 +1318,9 @@ fn setOutgoingAudioEnabled(mut cx: FunctionContext) -> JsResult<JsValue> {
 
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_audio_track.set_enabled(enabled);
+        endpoint
+            .peer_connection_factory
+            .set_audio_tap_local_input_enabled(enabled)?;
         // The client may call this before the call has connected.
         if let Ok(mut active_connection) = endpoint.call_manager.active_connection() {
             active_connection.update_sender_status(signaling::SenderStatus {
@@ -1631,6 +1637,9 @@ fn leave(mut cx: FunctionContext) -> JsResult<JsValue> {
     with_call_endpoint(&mut cx, |endpoint| {
         // When leaving, make sure outgoing media is stopped as soon as possible.
         endpoint.outgoing_audio_track.set_enabled(false);
+        endpoint
+            .peer_connection_factory
+            .set_audio_tap_local_input_enabled(false)?;
         endpoint.outgoing_video_track.set_enabled(false);
         endpoint.outgoing_video_track.set_content_hint(false);
         endpoint.call_manager.leave(client_id);
@@ -1647,6 +1656,9 @@ fn disconnect(mut cx: FunctionContext) -> JsResult<JsValue> {
     with_call_endpoint(&mut cx, |endpoint| {
         // When disconnecting, make sure outgoing media is stopped as soon as possible.
         endpoint.outgoing_audio_track.set_enabled(false);
+        endpoint
+            .peer_connection_factory
+            .set_audio_tap_local_input_enabled(false)?;
         endpoint.outgoing_video_track.set_enabled(false);
         endpoint.outgoing_video_track.set_content_hint(false);
         endpoint.call_manager.disconnect(client_id);
@@ -1664,6 +1676,9 @@ fn setOutgoingAudioMuted(mut cx: FunctionContext) -> JsResult<JsValue> {
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_audio_track.set_enabled(!muted);
         endpoint
+            .peer_connection_factory
+            .set_audio_tap_local_input_enabled(!muted)?;
+        endpoint
             .call_manager
             .set_outgoing_audio_muted(client_id, muted);
         Ok(())
@@ -1679,6 +1694,9 @@ fn setOutgoingAudioMutedRemotely(mut cx: FunctionContext) -> JsResult<JsValue> {
 
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_audio_track.set_enabled(false);
+        endpoint
+            .peer_connection_factory
+            .set_audio_tap_local_input_enabled(false)?;
         endpoint
             .call_manager
             .set_outgoing_audio_muted_remotely(client_id, mute_source);
@@ -2334,6 +2352,84 @@ fn setVoiceProcessingEnabled(mut cx: FunctionContext) -> JsResult<JsValue> {
     };
 
     Ok(cx.undefined().upcast())
+}
+
+#[allow(non_snake_case)]
+fn audioTapIsSupported(mut cx: FunctionContext) -> JsResult<JsBoolean> {
+    let supported = with_call_endpoint(&mut cx, |endpoint| {
+        endpoint.peer_connection_factory.is_audio_tap_supported()
+    });
+    Ok(cx.boolean(supported))
+}
+
+#[allow(non_snake_case)]
+fn audioTapVersion(mut cx: FunctionContext) -> JsResult<JsNumber> {
+    Ok(cx.number(AUDIO_TAP_API_VERSION))
+}
+
+#[allow(non_snake_case)]
+fn startAudioTap(mut cx: FunctionContext) -> JsResult<JsValue> {
+    with_call_endpoint(&mut cx, |endpoint| {
+        endpoint.peer_connection_factory.start_audio_tap()
+    })
+    .or_else(|err: anyhow::Error| cx.throw_error(format!("{}", err)))?;
+    Ok(cx.undefined().upcast())
+}
+
+#[allow(non_snake_case)]
+fn stopAudioTap(mut cx: FunctionContext) -> JsResult<JsValue> {
+    with_call_endpoint(&mut cx, |endpoint| {
+        endpoint.peer_connection_factory.stop_audio_tap()
+    })
+    .or_else(|err: anyhow::Error| cx.throw_error(format!("{}", err)))?;
+    Ok(cx.undefined().upcast())
+}
+
+#[allow(non_snake_case)]
+fn readAudioTap(mut cx: FunctionContext) -> JsResult<JsValue> {
+    let max_samples_per_source = cx.argument::<JsNumber>(0)?.value(&mut cx);
+    if !max_samples_per_source.is_finite() || max_samples_per_source < 0.0 {
+        return cx.throw_range_error("maxSamplesPerSource must be a finite non-negative number");
+    }
+    let max_samples_per_source = max_samples_per_source as usize;
+
+    let chunk = with_call_endpoint(&mut cx, |endpoint| {
+        endpoint
+            .peer_connection_factory
+            .drain_audio_tap(max_samples_per_source)
+    })
+    .or_else(|err: anyhow::Error| cx.throw_error(format!("{}", err)))?;
+
+    let result = cx.empty_object();
+    let sample_rate = cx.number(AUDIO_TAP_SAMPLE_RATE);
+    result.set(&mut cx, "sampleRate", sample_rate)?;
+    let channels = cx.number(AUDIO_TAP_CHANNELS);
+    result.set(&mut cx, "channels", channels)?;
+    let local_input_start_sample = cx.number(chunk.local_input_start_sample as f64);
+    result.set(&mut cx, "localInputStartSample", local_input_start_sample)?;
+    let remote_playout_start_sample = cx.number(chunk.remote_playout_start_sample as f64);
+    result.set(
+        &mut cx,
+        "remotePlayoutStartSample",
+        remote_playout_start_sample,
+    )?;
+
+    let local_input_pcm = pcm_i16_to_le_bytes(chunk.local_input);
+    let local_input_pcm = JsUint8Array::from_slice(&mut cx, &local_input_pcm)?;
+    result.set(&mut cx, "localInputPcm", local_input_pcm)?;
+    let remote_playout_pcm = pcm_i16_to_le_bytes(chunk.remote_playout);
+    let remote_playout_pcm = JsUint8Array::from_slice(&mut cx, &remote_playout_pcm)?;
+    result.set(&mut cx, "remotePlayoutPcm", remote_playout_pcm)?;
+
+    let dropped_local_input = cx.number(chunk.dropped_local_input as f64);
+    result.set(&mut cx, "droppedLocalInputSamples", dropped_local_input)?;
+    let dropped_remote_playout = cx.number(chunk.dropped_remote_playout as f64);
+    result.set(
+        &mut cx,
+        "droppedRemotePlayoutSamples",
+        dropped_remote_playout,
+    )?;
+    Ok(result.upcast())
 }
 
 #[allow(non_snake_case)]
@@ -3263,6 +3359,11 @@ fn register(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("cm_getAudioOutputs", getAudioOutputs)?;
     cx.export_function("cm_setAudioOutput", setAudioOutput)?;
     cx.export_function("cm_setVoiceProcessingEnabled", setVoiceProcessingEnabled)?;
+    cx.export_function("cm_audioTapIsSupported", audioTapIsSupported)?;
+    cx.export_function("cm_audioTapVersion", audioTapVersion)?;
+    cx.export_function("cm_startAudioTap", startAudioTap)?;
+    cx.export_function("cm_readAudioTap", readAudioTap)?;
+    cx.export_function("cm_stopAudioTap", stopAudioTap)?;
     cx.export_function("cm_setRtcStatsInterval", setRtcStatsInterval)?;
     cx.export_function("cm_processEvents", processEvents)?;
     Ok(())

@@ -158,6 +158,12 @@ class NativeCallManager {
 (NativeCallManager.prototype as any).setAudioOutput = Native.cm_setAudioOutput;
 (NativeCallManager.prototype as any).setVoiceProcessingEnabled =
   Native.cm_setVoiceProcessingEnabled;
+(NativeCallManager.prototype as any).isAudioTapSupported =
+  Native.cm_audioTapIsSupported;
+(NativeCallManager.prototype as any).audioTapVersion = Native.cm_audioTapVersion;
+(NativeCallManager.prototype as any).startAudioTap = Native.cm_startAudioTap;
+(NativeCallManager.prototype as any).readAudioTap = Native.cm_readAudioTap;
+(NativeCallManager.prototype as any).stopAudioTap = Native.cm_stopAudioTap;
 (NativeCallManager.prototype as any).processEvents = Native.cm_processEvents;
 (NativeCallManager.prototype as any).setRtcStatsInterval =
   Native.cm_setRtcStatsInterval;
@@ -1966,6 +1972,26 @@ export class RingRTCType {
   setVoiceProcessingEnabled(enabled: boolean): void {
     this.callManager.setVoiceProcessingEnabled(enabled);
   }
+
+  isAudioTapSupported(): boolean {
+    return this.callManager.isAudioTapSupported();
+  }
+
+  audioTapVersion(): number {
+    return this.callManager.audioTapVersion();
+  }
+
+  startAudioTap(): void {
+    this.callManager.startAudioTap();
+  }
+
+  readAudioTap(maxSamplesPerSource: number): AudioTapChunk {
+    return this.callManager.readAudioTap(maxSamplesPerSource);
+  }
+
+  stopAudioTap(): void {
+    this.callManager.stopAudioTap();
+  }
 }
 
 export type CallSettings = {
@@ -1994,6 +2020,18 @@ export type AudioDevice = {
   uniqueId: string;
   // If present, the identifier of a localized string to substitute for the device name.
   i18nKey?: string;
+};
+
+/** A bounded snapshot of signed 16-bit, little-endian mono PCM from RingRTC. */
+export type AudioTapChunk = {
+  sampleRate: number;
+  channels: number;
+  localInputStartSample: number;
+  remotePlayoutStartSample: number;
+  localInputPcm: Uint8Array<ArrayBuffer>;
+  remotePlayoutPcm: Uint8Array<ArrayBuffer>;
+  droppedLocalInputSamples: number;
+  droppedRemotePlayoutSamples: number;
 };
 
 // Given a weird name to not conflict with WebCodec's VideoPixelFormat
@@ -3188,6 +3226,11 @@ export type CallManager = {
   getAudioOutputs(): Array<AudioDevice>;
   setAudioOutput(index: number): void;
   setVoiceProcessingEnabled(enabled: boolean): void;
+  isAudioTapSupported(): boolean;
+  audioTapVersion(): number;
+  startAudioTap(): void;
+  readAudioTap(maxSamplesPerSource: number): AudioTapChunk;
+  stopAudioTap(): void;
 };
 
 export type CallManagerCallbacks = {

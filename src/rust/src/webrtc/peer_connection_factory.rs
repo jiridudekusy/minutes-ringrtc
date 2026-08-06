@@ -16,8 +16,6 @@ use anyhow::anyhow;
 pub use pcf::{RffiPeerConnectionFactoryInterface, RffiPeerConnectionFactoryOwner};
 
 #[cfg(all(not(feature = "sim"), feature = "native"))]
-use crate::webrtc::audio_device_module::AudioDeviceModule;
-#[cfg(all(not(feature = "sim"), feature = "native"))]
 use crate::webrtc::ffi::audio_device_module::{AUDIO_DEVICE_CBS_PTR, decrement_adm_ref_count};
 #[cfg(not(feature = "sim"))]
 use crate::webrtc::ffi::peer_connection_factory as pcf;
@@ -25,6 +23,8 @@ use crate::webrtc::ffi::peer_connection_factory as pcf;
 use crate::webrtc::injectable_network::InjectableNetwork;
 #[cfg(feature = "sim")]
 use crate::webrtc::sim::peer_connection_factory as pcf;
+#[cfg(all(not(feature = "sim"), feature = "native"))]
+use crate::{audio_tap::AudioTapChunk, webrtc::audio_device_module::AudioDeviceModule};
 use crate::{
     common::Result,
     error::RingRtcError,
@@ -624,6 +624,40 @@ impl PeerConnectionFactory {
             .as_ref()
             .and_then(|adm| adm.lock().ok())
             .map(|adm| adm.backend_name())
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn start_audio_tap(&self) -> Result<()> {
+        self.with_audio_device_module(|adm| adm.start_audio_tap())
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn is_audio_tap_supported(&self) -> bool {
+        self.adm.is_some()
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn stop_audio_tap(&self) -> Result<()> {
+        self.with_audio_device_module(|adm| adm.stop_audio_tap())
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn drain_audio_tap(&self, max_samples_per_source: usize) -> Result<AudioTapChunk> {
+        self.with_audio_device_module(|adm| adm.drain_audio_tap(max_samples_per_source))
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn set_audio_tap_local_input_enabled(&self, enabled: bool) -> Result<()> {
+        self.with_audio_device_module(|adm| adm.set_audio_tap_local_input_enabled(enabled))
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    fn with_audio_device_module<T>(&self, body: impl FnOnce(&AudioDeviceModule) -> T) -> Result<T> {
+        self.adm
+            .as_ref()
+            .and_then(|adm| adm.lock().ok())
+            .map(|adm| body(&adm))
+            .ok_or_else(|| anyhow!("couldn't access ADM"))
     }
 
     #[cfg(all(not(feature = "sim"), feature = "native"))]
