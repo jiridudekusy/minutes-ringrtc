@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "package": "@minutes/ringrtc",
+  "packageVersion": "2.69.7-minutes.1",
+  "upstreamVersion": "2.69.7",
+  "tapApiVersion": 1,
+  "targets": {
+    "mac-arm64": {
+      "runner": "macos-14",
+      "webrtcPlatform": "mac-arm64",
+      "targetArch": "arm64",
+      "cargoTarget": "aarch64-apple-darwin",
+      "nodePlatform": "darwin",
+      "nodeArch": "arm64",
+      "output": "src/node/build/darwin/libringrtc-arm64.node",
+      "artifactName": "minutes-ringrtc-v2.69.7-minutes.1-darwin-arm64"
+    },
+    "linux-x64": {
+      "runner": "ubuntu-22.04",
+      "webrtcPlatform": "linux-x64",
+      "targetArch": "x64",
+      "cargoTarget": "x86_64-unknown-linux-gnu",
+      "nodePlatform": "linux",
+      "nodeArch": "x64",
+      "output": "src/node/build/linux/libringrtc-x64.node",
+      "artifactName": "minutes-ringrtc-v2.69.7-minutes.3-linux-x64"
+    },
+    "windows-x64": {
+      "runner": "windows-2022",
+      "webrtcPlatform": "windows-x64",
+      "targetArch": "x64",
+      "cargoTarget": "x86_64-pc-windows-msvc",
+      "nodePlatform": "win32",
+      "nodeArch": "x64",
+      "output": "src/node/build/win32/libringrtc-x64.node",
+      "artifactName": "minutes-ringrtc-v2.69.7-minutes.1-win32-x64"
+    }
+  }
+}
