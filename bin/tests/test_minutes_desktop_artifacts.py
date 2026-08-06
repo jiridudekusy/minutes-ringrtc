@@ -15,6 +15,10 @@ import unittest
 from pathlib import Path
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from minutes_desktop_artifacts import validate_manifest  # noqa: E402
+
+
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 VALIDATOR = PROJECT_DIR / "bin" / "minutes_desktop_artifacts.py"
 ADDON_VERIFIER = PROJECT_DIR / "bin" / "verify_minutes_node_addon.js"
@@ -27,39 +31,7 @@ WORKFLOW = PROJECT_DIR / ".github" / "workflows" / "minutes_desktop_artifacts.ym
 class MinutesDesktopArtifactsTest(unittest.TestCase):
     @staticmethod
     def valid_manifest() -> dict:
-        return {
-            "schemaVersion": 1,
-            "package": "@minutes/ringrtc",
-            "packageVersion": "2.69.7-minutes.3",
-            "upstreamVersion": "2.69.7",
-            "tapApiVersion": 1,
-            "targets": {
-                "mac-arm64": {
-                    "runner": "macos-14",
-                    "webrtcPlatform": "mac-arm64",
-                    "targetArch": "arm64",
-                    "cargoTarget": "aarch64-apple-darwin",
-                    "nodePlatform": "darwin",
-                    "nodeArch": "arm64",
-                    "output": "src/node/build/darwin/libringrtc-arm64.node",
-                    "artifactName": (
-                        "minutes-ringrtc-v2.69.7-minutes.3-darwin-arm64"
-                    ),
-                },
-                "windows-x64": {
-                    "runner": "windows-2022",
-                    "webrtcPlatform": "windows-x64",
-                    "targetArch": "x64",
-                    "cargoTarget": "x86_64-pc-windows-msvc",
-                    "nodePlatform": "win32",
-                    "nodeArch": "x64",
-                    "output": "src/node/build/win32/libringrtc-x64.node",
-                    "artifactName": (
-                        "minutes-ringrtc-v2.69.7-minutes.3-win32-x64"
-                    ),
-                },
-            },
-        }
+        return json.loads(MANIFEST.read_text(encoding="utf-8"))
 
     def run_command(
         self, command: str, manifest: dict
@@ -187,9 +159,25 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_accepts_unreleased_revision_zero_during_upstream_sync(self) -> None:
+        manifest = self.valid_manifest()
+        upstream = manifest["upstreamVersion"]
+        manifest["packageVersion"] = f"{upstream}-minutes.0"
+        for target in manifest["targets"].values():
+            target["artifactName"] = (
+                f"minutes-ringrtc-v{manifest['packageVersion']}-"
+                f"{target['nodePlatform']}-{target['nodeArch']}"
+            )
+        node_package = json.loads(NODE_PACKAGE.read_text(encoding="utf-8"))
+        node_package["version"] = manifest["packageVersion"]
+        checksums = json.loads(CHECKSUMS.read_text(encoding="utf-8"))
+
+        validate_manifest(manifest, checksums, node_package)
+
     def test_rejects_manifest_version_that_differs_from_node_package(self) -> None:
         manifest = self.valid_manifest()
         manifest["packageVersion"] = "9.9.9"
+        package = json.loads(NODE_PACKAGE.read_text(encoding="utf-8"))
 
         result = self.run_validator(manifest)
 
@@ -197,7 +185,7 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
         self.assertEqual(
             result.stderr,
             "manifest error: packageVersion 9.9.9 does not match Node package "
-            "version 2.69.7-minutes.3\n",
+            f"version {package['version']}\n",
         )
 
     def test_rejects_manifest_with_wrong_audio_tap_api_version(self) -> None:
@@ -291,10 +279,13 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
 
     def test_node_package_is_minutes_compatibility_package(self) -> None:
         package = json.loads(NODE_PACKAGE.read_text(encoding="utf-8"))
+        manifest = self.valid_manifest()
 
         self.assertEqual(package["name"], "@minutes/ringrtc")
-        self.assertEqual(package["version"], "2.69.7-minutes.3")
-        self.assertEqual(package["config"]["upstreamVersion"], "2.69.7")
+        self.assertEqual(package["version"], manifest["packageVersion"])
+        self.assertEqual(
+            package["config"]["upstreamVersion"], manifest["upstreamVersion"]
+        )
         self.assertEqual(package["config"]["tapApiVersion"], 1)
         self.assertEqual(
             package["scripts"]["install"],

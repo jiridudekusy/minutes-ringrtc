@@ -18,5 +18,7 @@ local.properties
 !.cargo/config.toml
 !.cargo/audit.toml
 target
+__pycache__/
+*.py[cod]
 .spr.yml
 src/android/.settings

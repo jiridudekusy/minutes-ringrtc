@@ -1,0 +1,64 @@
+name: Release Minutes RingRTC
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Prepare and validate release metadata without pushing a commit or tag"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: minutes-ringrtc-release
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Prepare next Minutes revision
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(python bin/minutes_version.py prepare-release)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Validate release metadata and notes
+        shell: bash
+        run: |
+          python bin/minutes_version.py validate
+          python bin/minutes_patch_manifest.py check --include-working-tree
+          NOTES_FILE="${RUNNER_TEMP}/minutes-ringrtc-release-notes.md"
+          python bin/minutes_changelog.py "${{ steps.version.outputs.version }}" > "${NOTES_FILE}"
+          test -s "${NOTES_FILE}"
+      - name: Run maintenance tests
+        run: python -m unittest discover -s bin/tests -p 'test_*.py' -v
+      - name: Commit and tag release
+        if: inputs.dry_run != true
+        shell: bash
+        run: |
+          git add config/minutes_desktop_artifacts.json MINUTES-CHANGELOG.md \
+            src/node/package.json src/node/package-lock.json src/node/prebuilds.json
+          git commit -m "chore(release): Minutes RingRTC ${{ steps.version.outputs.version }}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Minutes RingRTC ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.tag }}"

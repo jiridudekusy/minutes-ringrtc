@@ -112,7 +112,7 @@ def validate_manifest(manifest: Any, checksums: Any, node_package: Any) -> None:
             f"tapApiVersion {node_config.get('tapApiVersion')}"
         )
     if not re.fullmatch(
-        rf"{re.escape(upstream_version)}-minutes\.[1-9][0-9]*", package_version
+        rf"{re.escape(upstream_version)}-minutes\.[0-9]+", package_version
     ):
         raise ManifestError(
             "packageVersion must be the supported Minutes semver derived from "

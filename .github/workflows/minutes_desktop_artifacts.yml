@@ -21,8 +21,6 @@ on:
       - "Cargo.toml"
       - "rust-toolchain"
   push:
-    branches:
-      - "codex/audio-tap-spike"
     tags:
       - "v*-minutes.*"
 
@@ -39,8 +37,8 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions/setup-python@a2e8d5e514c81f839c8a3e37f5c200c4f0b25ef4 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
       - name: Test artifact manifest validation
@@ -73,8 +71,8 @@ jobs:
           git config --global core.autocrlf false
           git config --global core.eol lf
           git config --global core.filemode false
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions/setup-python@a2e8d5e514c81f839c8a3e37f5c200c4f0b25ef4 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
       - name: Install protoc
@@ -159,8 +157,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions/setup-python@a2e8d5e514c81f839c8a3e37f5c200c4f0b25ef4 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -206,7 +204,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: "src/node/.nvmrc"
@@ -224,8 +225,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          package_version="${GITHUB_REF_NAME#v}"
+          python bin/minutes_changelog.py "${package_version}" > release-notes.md
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" release/* --clobber
+            gh release edit "${GITHUB_REF_NAME}" --notes-file release-notes.md
           else
-            gh release create "${GITHUB_REF_NAME}" release/* --generate-notes
+            gh release create "${GITHUB_REF_NAME}" release/* \
+              --title "Minutes RingRTC ${package_version}" \
+              --notes-file release-notes.md
           fi
