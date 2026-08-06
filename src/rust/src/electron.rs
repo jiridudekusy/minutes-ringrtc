@@ -431,6 +431,18 @@ pub struct CallEndpoint {
 }
 
 impl CallEndpoint {
+    fn set_audio_tap_local_input_enabled(&self, enabled: bool) {
+        if let Err(error) = self
+            .peer_connection_factory
+            .set_audio_tap_local_input_enabled(enabled)
+        {
+            warn!(
+                "Unable to update the optional audio tap local-input state: {}",
+                error
+            );
+        }
+    }
+
     fn new<'a>(
         cx: &mut impl Context<'a>,
         js_object: Handle<'a, JsObject>,
@@ -1037,6 +1049,7 @@ fn hangup(mut cx: FunctionContext) -> JsResult<JsValue> {
     debug!("JsCallManager.hangup()");
 
     with_call_endpoint(&mut cx, |endpoint| {
+        endpoint.set_audio_tap_local_input_enabled(false);
         endpoint.video_tap.reset_outgoing_state();
         endpoint.call_manager.hangup()?;
         Ok(())
@@ -1323,9 +1336,7 @@ fn setOutgoingAudioEnabled(mut cx: FunctionContext) -> JsResult<JsValue> {
 
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_audio_track.set_enabled(enabled);
-        endpoint
-            .peer_connection_factory
-            .set_audio_tap_local_input_enabled(enabled)?;
+        endpoint.set_audio_tap_local_input_enabled(enabled);
         // The client may call this before the call has connected.
         if let Ok(mut active_connection) = endpoint.call_manager.active_connection() {
             active_connection.update_sender_status(signaling::SenderStatus {
@@ -1659,9 +1670,7 @@ fn leave(mut cx: FunctionContext) -> JsResult<JsValue> {
     with_call_endpoint(&mut cx, |endpoint| {
         // When leaving, make sure outgoing media is stopped as soon as possible.
         endpoint.outgoing_audio_track.set_enabled(false);
-        endpoint
-            .peer_connection_factory
-            .set_audio_tap_local_input_enabled(false)?;
+        endpoint.set_audio_tap_local_input_enabled(false);
         endpoint.outgoing_video_track.set_enabled(false);
         endpoint.outgoing_video_track.set_content_hint(false);
         endpoint.video_tap.set_outgoing_video_enabled(false);
@@ -1680,9 +1689,7 @@ fn disconnect(mut cx: FunctionContext) -> JsResult<JsValue> {
     with_call_endpoint(&mut cx, |endpoint| {
         // When disconnecting, make sure outgoing media is stopped as soon as possible.
         endpoint.outgoing_audio_track.set_enabled(false);
-        endpoint
-            .peer_connection_factory
-            .set_audio_tap_local_input_enabled(false)?;
+        endpoint.set_audio_tap_local_input_enabled(false);
         endpoint.outgoing_video_track.set_enabled(false);
         endpoint.outgoing_video_track.set_content_hint(false);
         endpoint.video_tap.set_outgoing_video_enabled(false);
@@ -1701,9 +1708,7 @@ fn setOutgoingAudioMuted(mut cx: FunctionContext) -> JsResult<JsValue> {
 
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_audio_track.set_enabled(!muted);
-        endpoint
-            .peer_connection_factory
-            .set_audio_tap_local_input_enabled(!muted)?;
+        endpoint.set_audio_tap_local_input_enabled(!muted);
         endpoint
             .call_manager
             .set_outgoing_audio_muted(client_id, muted);
@@ -1720,9 +1725,7 @@ fn setOutgoingAudioMutedRemotely(mut cx: FunctionContext) -> JsResult<JsValue> {
 
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_audio_track.set_enabled(false);
-        endpoint
-            .peer_connection_factory
-            .set_audio_tap_local_input_enabled(false)?;
+        endpoint.set_audio_tap_local_input_enabled(false);
         endpoint
             .call_manager
             .set_outgoing_audio_muted_remotely(client_id, mute_source);

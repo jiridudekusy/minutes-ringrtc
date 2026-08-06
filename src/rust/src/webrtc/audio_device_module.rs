@@ -472,7 +472,6 @@ impl Worker {
         // if `input.len()` is not an exact multiple of WEBRTC_WINDOW.
         let mut buffer = VecDeque::<i16>::new();
         let send_to_webrtc = self.send_to_webrtc.clone();
-        let audio_tap = self.audio_tap.clone();
         buffer.reserve(WEBRTC_WINDOW);
         builder
             .name("ringrtc input")
@@ -498,7 +497,6 @@ impl Worker {
                         buffer.extend(chunk);
                         break;
                     }
-                    audio_tap.push_local_input(chunk);
                     let (ret, _new_mic_level) = Worker::recorded_data_is_available(
                         chunk.to_vec(),
                         NUM_CHANNELS,
@@ -1152,6 +1150,10 @@ impl AudioDeviceModule {
 
     pub fn set_audio_tap_local_input_enabled(&self, enabled: bool) {
         self.audio_tap.set_local_input_enabled(enabled);
+    }
+
+    pub(crate) fn audio_tap(&self) -> Arc<AudioTap> {
+        self.audio_tap.clone()
     }
 
     pub fn active_audio_layer(&self, _audio_layer: webrtc::ptr::Borrowed<AudioLayer>) -> i32 {

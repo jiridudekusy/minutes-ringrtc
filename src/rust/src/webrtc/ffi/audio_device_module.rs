@@ -7,15 +7,51 @@
 
 use std::{
     ffi::{c_uchar, c_void},
-    sync::{Arc, Mutex},
+    sync::{Arc, LockResult, Mutex, MutexGuard},
 };
 
 use libc::size_t;
 
 use crate::{
+    audio_tap::AudioTap,
     webrtc,
     webrtc::audio_device_module::{AudioDeviceModule, AudioLayer},
 };
+
+/// Shared owner passed through the stable ADM FFI pointer. Ordinary ADM
+/// callbacks lock `adm`, while the 10 ms post-APM callback reads `audio_tap`
+/// directly and therefore never contends with device enumeration or switching.
+#[derive(Debug)]
+pub struct AudioDeviceModuleHandle {
+    adm: Mutex<AudioDeviceModule>,
+    audio_tap: Arc<AudioTap>,
+}
+
+impl AudioDeviceModuleHandle {
+    pub fn new(adm: AudioDeviceModule) -> Self {
+        let audio_tap = adm.audio_tap();
+        Self {
+            adm: Mutex::new(adm),
+            audio_tap,
+        }
+    }
+
+    pub fn lock(&self) -> LockResult<MutexGuard<'_, AudioDeviceModule>> {
+        self.adm.lock()
+    }
+}
+
+fn audio_tap_is_active_impl(tap: &AudioTap) -> bool {
+    tap.is_active()
+}
+
+fn push_processed_local_audio_impl(tap: &AudioTap, samples: &[i16]) -> bool {
+    if samples.is_empty() {
+        return false;
+    }
+    tap.push_local_input(samples);
+    true
+}
 
 /// all_adm_functions is a higher-level macro that enables "tt muncher" macros
 /// The list of functions MUST be kept in sync with AudioDeviceCallbacks in webrtc C++, and
@@ -94,6 +130,11 @@ macro_rules! all_adm_functions {
 
             // Playout delay
             playout_delay(delay_ms: webrtc::ptr::Borrowed<u16>) -> i32;
+
+            // Processed local capture, after WebRTC audio processing. These
+            // callbacks intentionally bypass the ADM mutex.
+            audio_tap_is_active() -> bool;
+            push_processed_local_audio(samples: webrtc::ptr::Borrowed<i16>, sample_count: size_t) -> bool;
         );
     }
 }
@@ -126,10 +167,40 @@ impl From<InternalFailure> for bool {
 /// need to worry about name mangling or matching case with C++.
 macro_rules! adm_wrapper {
     () => {};
+    (audio_tap_is_active() -> bool ; $($t:tt)*) => {
+        extern "C" fn audio_tap_is_active(
+            ptr: webrtc::ptr::Borrowed<AudioDeviceModuleHandle>,
+        ) -> bool {
+            // Safety: C++ retains the Arc backing this pointer until the peer
+            // connection factory and its audio processor are destroyed.
+            unsafe { ptr.as_ref() }
+                .is_some_and(|handle| audio_tap_is_active_impl(&handle.audio_tap))
+        }
+        adm_wrapper!($($t)*);
+    };
+    (push_processed_local_audio(samples: webrtc::ptr::Borrowed<i16>, sample_count: size_t) -> bool ; $($t:tt)*) => {
+        extern "C" fn push_processed_local_audio(
+            ptr: webrtc::ptr::Borrowed<AudioDeviceModuleHandle>,
+            samples: webrtc::ptr::Borrowed<i16>,
+            sample_count: size_t,
+        ) -> bool {
+            // Safety: The handle has the lifetime described above. WebRTC owns
+            // the sample buffer for the duration of this synchronous callback.
+            let Some(handle) = (unsafe { ptr.as_ref() }) else {
+                return false;
+            };
+            if samples.is_null() || sample_count == 0 {
+                return false;
+            }
+            let samples = unsafe { std::slice::from_raw_parts(samples.as_ptr(), sample_count) };
+            push_processed_local_audio_impl(&handle.audio_tap, samples)
+        }
+        adm_wrapper!($($t)*);
+    };
     ($f:ident($($param:ident: $arg_ty:ty),*) -> $ret:ty ; $($t:tt)*) => {
-        extern "C" fn $f(mut ptr: webrtc::ptr::Borrowed<Mutex<AudioDeviceModule>>, $($param: $arg_ty),*) -> $ret {
-            if let Some(mutex) = unsafe { ptr.as_mut() } {
-                match mutex.lock() {
+        extern "C" fn $f(ptr: webrtc::ptr::Borrowed<AudioDeviceModuleHandle>, $($param: $arg_ty),*) -> $ret {
+            if let Some(handle) = unsafe { ptr.as_ref() } {
+                match handle.lock() {
                     #[allow(unused_mut)]  // Some functions require mut; others don't.
                     Ok(mut adm) => adm.$f($($param),*),
                     Err(e) =>  {
@@ -164,13 +235,13 @@ macro_rules! adm_struct_definition {
         adm_struct_definition!(struct AudioDeviceCallbacks {
             $($inner)*
             pub $f: extern "C" fn(
-              adm_borrowed: webrtc::ptr::Borrowed<Mutex<AudioDeviceModule>>, $($param: $arg_ty),*) -> $ret,
+              adm_borrowed: webrtc::ptr::Borrowed<AudioDeviceModuleHandle>, $($param: $arg_ty),*) -> $ret,
         } => $($t)*);
     };
     ($f:ident($($param:ident: $arg_ty:ty),*) -> $ret:ty ; $($t:tt)*) => {
         adm_struct_definition!(struct AudioDeviceCallbacks {
           pub $f: extern "C" fn(
-              adm_borrowed: webrtc::ptr::Borrowed<Mutex<AudioDeviceModule>>, $($param: $arg_ty),*) -> $ret,
+              adm_borrowed: webrtc::ptr::Borrowed<AudioDeviceModuleHandle>, $($param: $arg_ty),*) -> $ret,
         } => $($t)*);
     }
 }
@@ -218,9 +289,29 @@ pub unsafe extern "C" fn decrement_adm_ref_count(adm_borrowed: webrtc::ptr::Borr
         return;
     }
     // Get types right
-    let adm_borrowed = adm_borrowed.as_ptr() as *const Mutex<AudioDeviceModule>;
+    let adm_borrowed = adm_borrowed.as_ptr() as *const AudioDeviceModuleHandle;
     // Only used for decrementing the reference count.
     let _adm = unsafe { Arc::from_raw(adm_borrowed) };
+}
+
+#[cfg(test)]
+mod audio_tap_callback_tests {
+    use super::{audio_tap_is_active_impl, push_processed_local_audio_impl};
+    use crate::audio_tap::AudioTap;
+
+    #[test]
+    fn callbacks_access_the_tap_without_an_adm_mutex() {
+        let tap = AudioTap::new(8);
+        assert!(!audio_tap_is_active_impl(&tap));
+
+        tap.start();
+        tap.set_local_input_enabled(true);
+        let samples = [11, 12, 13, 14];
+        assert!(push_processed_local_audio_impl(&tap, &samples));
+
+        assert!(audio_tap_is_active_impl(&tap));
+        assert_eq!(tap.drain(usize::MAX).local_input, samples);
+    }
 }
 
 unsafe extern "C" {

@@ -8,7 +8,7 @@
 #[cfg(all(not(feature = "sim"), feature = "native"))]
 use std::ffi::c_void;
 #[cfg(all(not(feature = "sim"), feature = "native"))]
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::{ffi::CString, os::raw::c_char};
 
 #[cfg(all(not(feature = "sim"), feature = "native"))]
@@ -16,7 +16,9 @@ use anyhow::anyhow;
 pub use pcf::{RffiPeerConnectionFactoryInterface, RffiPeerConnectionFactoryOwner};
 
 #[cfg(all(not(feature = "sim"), feature = "native"))]
-use crate::webrtc::ffi::audio_device_module::{AUDIO_DEVICE_CBS_PTR, decrement_adm_ref_count};
+use crate::webrtc::ffi::audio_device_module::{
+    AUDIO_DEVICE_CBS_PTR, AudioDeviceModuleHandle, decrement_adm_ref_count,
+};
 #[cfg(not(feature = "sim"))]
 use crate::webrtc::ffi::peer_connection_factory as pcf;
 #[cfg(feature = "injectable_network")]
@@ -137,10 +139,27 @@ pub struct RffiAudioConfig {
     #[cfg(all(not(feature = "sim"), feature = "native"))]
     pub free_adm_cb: unsafe extern "C" fn(webrtc::ptr::Borrowed<c_void>),
 }
+
+#[cfg(all(test, not(feature = "sim"), feature = "native"))]
+mod audio_config_abi_tests {
+    use super::RffiAudioConfig;
+
+    #[test]
+    fn desktop_audio_config_keeps_the_prebuilt_webrtc_abi() {
+        let pointer_size = std::mem::size_of::<*const ()>();
+        let bools_with_pointer_alignment = 4_usize.div_ceil(pointer_size) * pointer_size;
+        // Four C++ bools followed by ADM, callback-table, and free-callback pointers.
+        assert_eq!(
+            std::mem::size_of::<RffiAudioConfig>(),
+            bools_with_pointer_alignment + 3 * pointer_size
+        );
+    }
+}
+
 pub struct RffiAudioConfigWrapper {
     rffi: RffiAudioConfig,
     #[cfg(all(not(feature = "sim"), feature = "native"))]
-    adm: Option<Arc<Mutex<AudioDeviceModule>>>,
+    adm: Option<Arc<AudioDeviceModuleHandle>>,
 }
 
 #[derive(Clone, Debug)]
@@ -188,7 +207,7 @@ impl AudioConfig {
                 if let Some(observer) = audio_device_observer.take() {
                     adm.register_audio_device_callback(observer)?;
                 }
-                let adm_arc = Arc::new(Mutex::new(adm));
+                let adm_arc = Arc::new(AudioDeviceModuleHandle::new(adm));
                 (
                     // This will need to be explicitly destroyed by the
                     // C++ layer by calling decrement_adm_ref_count to
@@ -196,7 +215,7 @@ impl AudioConfig {
                     // We use into_raw(...clone()) here to ensure that
                     // the ADM stays alive until the C++ layer is done
                     // using it.
-                    webrtc::ptr::Borrowed::from_ptr(Arc::<Mutex<AudioDeviceModule>>::into_raw(
+                    webrtc::ptr::Borrowed::from_ptr(Arc::<AudioDeviceModuleHandle>::into_raw(
                         adm_arc.clone(),
                     ))
                     .to_void(),
@@ -283,7 +302,7 @@ pub struct PeerConnectionFactory {
     device_counts: DeviceCounts,
     // Hold this so we run `drop` on it on shutdown
     #[cfg(all(not(feature = "sim"), feature = "native"))]
-    adm: Option<Arc<Mutex<AudioDeviceModule>>>,
+    adm: Option<Arc<AudioDeviceModuleHandle>>,
 }
 
 impl PeerConnectionFactory {
