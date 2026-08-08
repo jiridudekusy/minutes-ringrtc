@@ -158,6 +158,20 @@ class NativeCallManager {
 (NativeCallManager.prototype as any).setAudioOutput = Native.cm_setAudioOutput;
 (NativeCallManager.prototype as any).setVoiceProcessingEnabled =
   Native.cm_setVoiceProcessingEnabled;
+(NativeCallManager.prototype as any).isAudioTapSupported =
+  Native.cm_audioTapIsSupported;
+(NativeCallManager.prototype as any).audioTapVersion =
+  Native.cm_audioTapVersion;
+(NativeCallManager.prototype as any).startAudioTap = Native.cm_startAudioTap;
+(NativeCallManager.prototype as any).readAudioTap = Native.cm_readAudioTap;
+(NativeCallManager.prototype as any).stopAudioTap = Native.cm_stopAudioTap;
+(NativeCallManager.prototype as any).isVideoTapSupported =
+  Native.cm_videoTapIsSupported;
+(NativeCallManager.prototype as any).videoTapVersion =
+  Native.cm_videoTapVersion;
+(NativeCallManager.prototype as any).startVideoTap = Native.cm_startVideoTap;
+(NativeCallManager.prototype as any).readVideoTap = Native.cm_readVideoTap;
+(NativeCallManager.prototype as any).stopVideoTap = Native.cm_stopVideoTap;
 (NativeCallManager.prototype as any).processEvents = Native.cm_processEvents;
 (NativeCallManager.prototype as any).setRtcStatsInterval =
   Native.cm_setRtcStatsInterval;
@@ -1966,6 +1980,46 @@ export class RingRTCType {
   setVoiceProcessingEnabled(enabled: boolean): void {
     this.callManager.setVoiceProcessingEnabled(enabled);
   }
+
+  isAudioTapSupported(): boolean {
+    return this.callManager.isAudioTapSupported();
+  }
+
+  audioTapVersion(): number {
+    return this.callManager.audioTapVersion();
+  }
+
+  startAudioTap(): void {
+    this.callManager.startAudioTap();
+  }
+
+  readAudioTap(maxSamplesPerSource: number): AudioTapChunk {
+    return this.callManager.readAudioTap(maxSamplesPerSource);
+  }
+
+  stopAudioTap(): void {
+    this.callManager.stopAudioTap();
+  }
+
+  isVideoTapSupported(): boolean {
+    return this.callManager.isVideoTapSupported();
+  }
+
+  videoTapVersion(): number {
+    return this.callManager.videoTapVersion();
+  }
+
+  startVideoTap(): void {
+    this.callManager.startVideoTap();
+  }
+
+  readVideoTap(lastSequence: number): VideoTapEvent | undefined {
+    return this.callManager.readVideoTap(lastSequence);
+  }
+
+  stopVideoTap(): void {
+    this.callManager.stopVideoTap();
+  }
 }
 
 export type CallSettings = {
@@ -1995,6 +2049,36 @@ export type AudioDevice = {
   // If present, the identifier of a localized string to substitute for the device name.
   i18nKey?: string;
 };
+
+/** A bounded snapshot of signed 16-bit, little-endian mono PCM from RingRTC. */
+export type AudioTapChunk = {
+  sampleRate: number;
+  channels: number;
+  localInputStartSample: number;
+  remotePlayoutStartSample: number;
+  localInputPcm: Uint8Array<ArrayBuffer>;
+  remotePlayoutPcm: Uint8Array<ArrayBuffer>;
+  droppedLocalInputSamples: number;
+  droppedRemotePlayoutSamples: number;
+};
+
+export type VideoTapInactiveEvent = {
+  sequence: number;
+  timestampUs: number;
+  active: false;
+};
+
+export type VideoTapFrameEvent = {
+  sequence: number;
+  timestampUs: number;
+  active: true;
+  width: number;
+  height: number;
+  format: 'i420' | 'nv12' | 'rgba';
+  data: Uint8Array<ArrayBuffer>;
+};
+
+export type VideoTapEvent = VideoTapInactiveEvent | VideoTapFrameEvent;
 
 // Given a weird name to not conflict with WebCodec's VideoPixelFormat
 export enum VideoPixelFormatEnum {
@@ -3188,6 +3272,16 @@ export type CallManager = {
   getAudioOutputs(): Array<AudioDevice>;
   setAudioOutput(index: number): void;
   setVoiceProcessingEnabled(enabled: boolean): void;
+  isAudioTapSupported(): boolean;
+  audioTapVersion(): number;
+  startAudioTap(): void;
+  readAudioTap(maxSamplesPerSource: number): AudioTapChunk;
+  stopAudioTap(): void;
+  isVideoTapSupported(): boolean;
+  videoTapVersion(): number;
+  startVideoTap(): void;
+  readVideoTap(lastSequence: number): VideoTapEvent | undefined;
+  stopVideoTap(): void;
 };
 
 export type CallManagerCallbacks = {

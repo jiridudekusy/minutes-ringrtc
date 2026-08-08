@@ -7,14 +7,14 @@ on:
 jobs:
   code_formatting:
     name: Code Formatting
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
     - run: rustup toolchain install nightly --profile minimal --component rustfmt
     - name: Check rust format
       run: cargo +nightly fmt -- --check
     - name: Install for node
-      run: npm ci
+      run: npm ci --ignore-scripts
       working-directory: src/node
     - name: Check typescript format
       run: npm run check-format
@@ -22,7 +22,7 @@ jobs:
 
   lints:
     name: Lints
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     steps:
     - name: Install deps
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libpulse-dev
@@ -71,14 +71,13 @@ jobs:
     - name: Clippy (direct)
       run: cargo clippy --package ringrtc --bin direct --features=direct
     - name: Install for node
-      run: npm ci
+      run: npm ci --ignore-scripts
       working-directory: src/node
     - name: Check typescript
       run: npm run oxlint
       working-directory: src/node
-    - name: Check package.json for prebuildChecksum
-      run: >-
-        grep -q '"prebuildChecksum": ""' package.json
+    - name: Check Minutes distribution metadata
+      run: npm run test:distribution
       working-directory: src/node
     - name: Compare package.json and package-lock.json versions
       run: >
@@ -92,7 +91,7 @@ jobs:
 
   tests:
     name: Tests
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     steps:
     - name: Install deps
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libpulse-dev
@@ -106,7 +105,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest-4-cores, windows-latest-8-cores, macos-latest, ubuntu-24.04-arm64-4-cores]
+        os: [ubuntu-latest, windows-latest, macos-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -132,7 +131,7 @@ jobs:
       if: ${{ !startsWith(matrix.os, 'windows-') }}
     - run: bin/build-desktop --release --ringrtc-only --test-ringrtc-adm-utils
       if: ${{ startsWith(matrix.os, 'windows-') }}
-    - run: npm ci
+    - run: npm ci --ignore-scripts
       working-directory: src/node
     - run: npm run build
       working-directory: src/node
@@ -148,7 +147,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest-4-cores, macos-latest, windows-latest-8-cores, ubuntu-24.04-arm64-4-cores]
+        os: [ubuntu-latest, macos-latest, windows-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -173,7 +172,7 @@ jobs:
 
   android:
     name: Android Build
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     steps:
     - name: Install protoc
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -189,19 +188,23 @@ jobs:
 
   ios:
     name: iOS Tests
-    runs-on: macos-latest-xlarge
+    runs-on: macos-latest
     steps:
     - uses: actions/checkout@v6
     - run: brew install protobuf coreutils # for grealpath
     - run: rustup toolchain install $(cat rust-toolchain) --profile minimal --target aarch64-apple-ios-sim
     - run: cargo install cbindgen
-    - run: sudo xcodes select 26.1.1
     - run: bin/fetch-artifact -p ios
     - run: bin/build-ios --release --ringrtc-only --host-sim-only
     - run: pod install
       working-directory: src/ios/SignalRingRTC
-    # Pick a phone model here that's likely to work on recent Xcodes.
-    - run: xcodebuild test -workspace SignalRingRTC.xcworkspace -scheme SignalRingRTC -destination 'platform=iOS Simulator,name=iPhone 17'
+    - name: Create iOS simulator
+      id: ios_simulator
+      run: |
+        RUNTIME_ID=$(xcrun simctl list runtimes --json | jq -r '[.runtimes[] | select(.isAvailable and (.identifier | contains("SimRuntime.iOS")))] | sort_by(.version) | last.identifier')
+        DEVICE_ID=$(xcrun simctl create "RingRTC CI iPhone" com.apple.CoreSimulator.SimDeviceType.iPhone-17 "$RUNTIME_ID")
+        echo "id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+    - run: xcodebuild test -workspace SignalRingRTC.xcworkspace -scheme SignalRingRTC -destination 'platform=iOS Simulator,id=${{ steps.ios_simulator.outputs.id }}'
       working-directory: src/ios/SignalRingRTC
       env:
         TEST_RUNNER_RINGRTC_MAX_LOG_LEVEL: 2 # warnings only

@@ -6,6 +6,7 @@
 import { RingRTCType } from './ringrtc/Service';
 
 export type {
+  AudioTapChunk,
   AudioDevice,
   CallId,
   CallSettings,
@@ -16,6 +17,9 @@ export type {
   PeekInfo,
   Reaction,
   UserId,
+  VideoTapEvent,
+  VideoTapFrameEvent,
+  VideoTapInactiveEvent,
   VideoFrameSender,
   VideoFrameSource,
 } from './ringrtc/Service';

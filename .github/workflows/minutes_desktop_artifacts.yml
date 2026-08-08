@@ -1,0 +1,237 @@
+name: Build Minutes RingRTC native addons
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/minutes_desktop_artifacts.yml"
+      - "bin/build-desktop"
+      - "bin/apply-webrtc-patches.py"
+      - "bin/gsync-webrtc"
+      - "bin/minutes_desktop_artifacts.py"
+      - "bin/tests/**"
+      - "config/minutes_desktop_artifacts.json"
+      - "config/version.*"
+      - "config/webrtc_artifact_checksums.json"
+      - "src/node/**"
+      - "src/rust/**"
+      - "patches/webrtc/**"
+      - "webrtc-sys/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain"
+  push:
+    tags:
+      - "v*-minutes.*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  manifest:
+    name: Validate artifact manifest
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Test artifact manifest validation
+        run: >-
+          python -m unittest discover
+          -s bin/tests
+          -p 'test_*.py'
+          -v
+      - name: Export build matrix
+        id: matrix
+        shell: bash
+        run: |
+          matrix="$(python bin/minutes_desktop_artifacts.py matrix \
+            --manifest config/minutes_desktop_artifacts.json \
+            --checksums config/webrtc_artifact_checksums.json)"
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build ${{ matrix.id }}
+    needs: manifest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.manifest.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Configure Windows Git checkout
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          git config --global core.filemode false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Install protoc
+        uses: ./.github/actions/install-protoc
+      - name: Install macOS path utilities
+        if: runner.os == 'macOS'
+        run: brew install coreutils
+      - name: Install Linux audio dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libpulse-dev libpulse0
+      - name: Install Windows SDK
+        if: runner.os == 'Windows'
+        uses: ChristopheLav/windows-sdk-install@aceebd61475568479ce68465d0849f5de9a0bfe9 # v1
+        with:
+          version-sdk: 26100
+          features: "OptionId.WindowsDesktopDebuggers"
+      - name: Install Rust target
+        shell: bash
+        run: >-
+          rustup toolchain install "$(cat rust-toolchain)"
+          --profile minimal
+          --target "${{ matrix.cargoTarget }}"
+      - name: Validate artifact metadata
+        shell: bash
+        run: >-
+          python bin/minutes_desktop_artifacts.py validate
+          --manifest config/minutes_desktop_artifacts.json
+          --checksums config/webrtc_artifact_checksums.json
+      - name: Install Chromium depot_tools
+        shell: bash
+        run: |
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git out/depot_tools
+          echo "${PWD}/out/depot_tools" >> "${GITHUB_PATH}"
+      - name: Prepare patched WebRTC workspace (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash bin/prepare-workspace mac
+      - name: Prepare patched WebRTC workspace (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash bin/prepare-workspace unix
+      - name: Prepare patched WebRTC workspace (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bash bin/prepare-workspace windows
+      - name: Build patched WebRTC, run its tap test, and build native addon
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.targetArch }}
+        run: >-
+          bash bin/build-desktop
+          --release
+          --no-call-sim-cli
+          --test-processed-audio-frame-processor
+      - name: Verify native addon
+        shell: bash
+        run: >-
+          python bin/minutes_desktop_artifacts.py verify-output
+          --manifest config/minutes_desktop_artifacts.json
+          --checksums config/webrtc_artifact_checksums.json
+          --target "${{ matrix.id }}"
+      - name: Verify versioned audio tap API export
+        shell: bash
+        run: >-
+          node bin/verify_minutes_node_addon.js
+          "${{ matrix.output }}"
+          1
+      - name: Upload native addon
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.artifactName }}
+          path: |
+            ${{ matrix.output }}
+            config/minutes_desktop_artifacts.json
+            config/webrtc_artifact_checksums.json
+            LICENSE
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Assemble compatibility package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: "src/node/.nvmrc"
+      - name: Download native addons
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: minutes-ringrtc-*
+          path: staged-addons
+          merge-multiple: true
+      - name: Generate checksum-pinned release manifest
+        shell: bash
+        run: >-
+          python bin/minutes_desktop_artifacts.py release-manifest
+          --manifest config/minutes_desktop_artifacts.json
+          --checksums config/webrtc_artifact_checksums.json
+          --assets-dir staged-addons
+          --release-dir release
+          --output src/node/prebuilds.json
+      - name: Test and pack compatibility package
+        working-directory: src/node
+        shell: bash
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          npm run test:distribution
+          npm run prepublishOnly
+          npm pack --pack-destination ../../release
+      - name: Upload release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: minutes-ringrtc-release
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: "src/node/.nvmrc"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: minutes-ringrtc-release
+          path: release
+      - name: Verify release tag
+        shell: bash
+        run: |
+          package_version="$(node -p "require('./src/node/package.json').version")"
+          test "${GITHUB_REF_NAME}" = "v${package_version}"
+      - name: Create or refresh checksum-pinned GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          package_version="${GITHUB_REF_NAME#v}"
+          python bin/minutes_changelog.py "${package_version}" > release-notes.md
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" release/* --clobber
+            gh release edit "${GITHUB_REF_NAME}" --notes-file release-notes.md
+          else
+            gh release create "${GITHUB_REF_NAME}" release/* \
+              --title "Minutes RingRTC ${package_version}" \
+              --notes-file release-notes.md
+          fi

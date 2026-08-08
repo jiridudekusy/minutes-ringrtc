@@ -20,6 +20,9 @@ extern crate log;
 #[macro_use]
 extern crate static_assertions;
 
+pub mod audio_tap;
+pub mod video_tap;
+
 #[macro_use]
 pub mod common;
 

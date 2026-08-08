@@ -1,12 +1,12 @@
 {
-  "name": "@signalapp/ringrtc",
-  "version": "2.69.7",
+  "name": "@minutes/ringrtc",
+  "version": "2.69.7-minutes.3",
   "repository": {
     "type": "git",
-    "url": "https://github.com/signalapp/ringrtc.git",
+    "url": "https://github.com/jiridudekusy/minutes-ringrtc.git",
     "directory": "src/node"
   },
-  "description": "Signal Messenger voice and video calling library.",
+  "description": "Minutes-compatible RingRTC with versioned call-audio and outgoing-video taps.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -15,7 +15,9 @@
     "dist/ringrtc/*.js",
     "dist/ringrtc/*.d.ts",
     "dist/acknowledgments.md",
-    "scripts/fetch-prebuild.js"
+    "scripts/fetch-minutes-prebuild.js",
+    "scripts/prepublish.js",
+    "prebuilds.json"
   ],
   "bin": {
     "virtual_audio": "dist/bin/virtual_audio.sh"
@@ -24,22 +26,23 @@
     "build": "tsc && bash scripts/build-help.sh",
     "clean": "rimraf dist",
     "test": "electron-mocha --renderer --recursive dist/test --timeout 10000 --require source-map-support/register",
+    "test:distribution": "node --test scripts/fetch-minutes-prebuild.test.js scripts/prepublish.test.js",
     "oxlint": "oxlint --format=stylish",
     "lint": "npm run format --list-different && npm run oxlint",
     "format": "prettier --write .",
     "check-format": "prettier . --check",
-    "install": "node scripts/fetch-prebuild.js",
+    "install": "node scripts/fetch-minutes-prebuild.js",
     "prepublishOnly": "node scripts/prepublish.js"
   },
   "config": {
-    "prebuildUrl": "https://build-artifacts.signal.org/libraries/ringrtc-desktop-build-v${npm_package_version}.tar.gz",
-    "prebuildChecksum": ""
+    "upstreamVersion": "2.69.7",
+    "tapApiVersion": 1,
+    "releaseRepository": "jiridudekusy/minutes-ringrtc"
   },
   "author": "",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "https-proxy-agent": "7.0.6",
-    "tar": "7.5.15"
+    "https-proxy-agent": "7.0.6"
   },
   "devDependencies": {
     "@types/chai": "5.2.3",

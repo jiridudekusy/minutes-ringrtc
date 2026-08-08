@@ -8,7 +8,7 @@
 #[cfg(all(not(feature = "sim"), feature = "native"))]
 use std::ffi::c_void;
 #[cfg(all(not(feature = "sim"), feature = "native"))]
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::{ffi::CString, os::raw::c_char};
 
 #[cfg(all(not(feature = "sim"), feature = "native"))]
@@ -16,15 +16,17 @@ use anyhow::anyhow;
 pub use pcf::{RffiPeerConnectionFactoryInterface, RffiPeerConnectionFactoryOwner};
 
 #[cfg(all(not(feature = "sim"), feature = "native"))]
-use crate::webrtc::audio_device_module::AudioDeviceModule;
-#[cfg(all(not(feature = "sim"), feature = "native"))]
-use crate::webrtc::ffi::audio_device_module::{AUDIO_DEVICE_CBS_PTR, decrement_adm_ref_count};
+use crate::webrtc::ffi::audio_device_module::{
+    AUDIO_DEVICE_CBS_PTR, AudioDeviceModuleHandle, decrement_adm_ref_count,
+};
 #[cfg(not(feature = "sim"))]
 use crate::webrtc::ffi::peer_connection_factory as pcf;
 #[cfg(feature = "injectable_network")]
 use crate::webrtc::injectable_network::InjectableNetwork;
 #[cfg(feature = "sim")]
 use crate::webrtc::sim::peer_connection_factory as pcf;
+#[cfg(all(not(feature = "sim"), feature = "native"))]
+use crate::{audio_tap::AudioTapChunk, webrtc::audio_device_module::AudioDeviceModule};
 use crate::{
     common::Result,
     error::RingRtcError,
@@ -137,10 +139,27 @@ pub struct RffiAudioConfig {
     #[cfg(all(not(feature = "sim"), feature = "native"))]
     pub free_adm_cb: unsafe extern "C" fn(webrtc::ptr::Borrowed<c_void>),
 }
+
+#[cfg(all(test, not(feature = "sim"), feature = "native"))]
+mod audio_config_abi_tests {
+    use super::RffiAudioConfig;
+
+    #[test]
+    fn desktop_audio_config_keeps_the_prebuilt_webrtc_abi() {
+        let pointer_size = std::mem::size_of::<*const ()>();
+        let bools_with_pointer_alignment = 4_usize.div_ceil(pointer_size) * pointer_size;
+        // Four C++ bools followed by ADM, callback-table, and free-callback pointers.
+        assert_eq!(
+            std::mem::size_of::<RffiAudioConfig>(),
+            bools_with_pointer_alignment + 3 * pointer_size
+        );
+    }
+}
+
 pub struct RffiAudioConfigWrapper {
     rffi: RffiAudioConfig,
     #[cfg(all(not(feature = "sim"), feature = "native"))]
-    adm: Option<Arc<Mutex<AudioDeviceModule>>>,
+    adm: Option<Arc<AudioDeviceModuleHandle>>,
 }
 
 #[derive(Clone, Debug)]
@@ -188,7 +207,7 @@ impl AudioConfig {
                 if let Some(observer) = audio_device_observer.take() {
                     adm.register_audio_device_callback(observer)?;
                 }
-                let adm_arc = Arc::new(Mutex::new(adm));
+                let adm_arc = Arc::new(AudioDeviceModuleHandle::new(adm));
                 (
                     // This will need to be explicitly destroyed by the
                     // C++ layer by calling decrement_adm_ref_count to
@@ -196,7 +215,7 @@ impl AudioConfig {
                     // We use into_raw(...clone()) here to ensure that
                     // the ADM stays alive until the C++ layer is done
                     // using it.
-                    webrtc::ptr::Borrowed::from_ptr(Arc::<Mutex<AudioDeviceModule>>::into_raw(
+                    webrtc::ptr::Borrowed::from_ptr(Arc::<AudioDeviceModuleHandle>::into_raw(
                         adm_arc.clone(),
                     ))
                     .to_void(),
@@ -283,7 +302,7 @@ pub struct PeerConnectionFactory {
     device_counts: DeviceCounts,
     // Hold this so we run `drop` on it on shutdown
     #[cfg(all(not(feature = "sim"), feature = "native"))]
-    adm: Option<Arc<Mutex<AudioDeviceModule>>>,
+    adm: Option<Arc<AudioDeviceModuleHandle>>,
 }
 
 impl PeerConnectionFactory {
@@ -624,6 +643,40 @@ impl PeerConnectionFactory {
             .as_ref()
             .and_then(|adm| adm.lock().ok())
             .map(|adm| adm.backend_name())
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn start_audio_tap(&self) -> Result<()> {
+        self.with_audio_device_module(|adm| adm.start_audio_tap())
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn is_audio_tap_supported(&self) -> bool {
+        self.adm.is_some()
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn stop_audio_tap(&self) -> Result<()> {
+        self.with_audio_device_module(|adm| adm.stop_audio_tap())
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn drain_audio_tap(&self, max_samples_per_source: usize) -> Result<AudioTapChunk> {
+        self.with_audio_device_module(|adm| adm.drain_audio_tap(max_samples_per_source))
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    pub fn set_audio_tap_local_input_enabled(&self, enabled: bool) -> Result<()> {
+        self.with_audio_device_module(|adm| adm.set_audio_tap_local_input_enabled(enabled))
+    }
+
+    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    fn with_audio_device_module<T>(&self, body: impl FnOnce(&AudioDeviceModule) -> T) -> Result<T> {
+        self.adm
+            .as_ref()
+            .and_then(|adm| adm.lock().ok())
+            .map(|adm| body(&adm))
+            .ok_or_else(|| anyhow!("couldn't access ADM"))
     }
 
     #[cfg(all(not(feature = "sim"), feature = "native"))]

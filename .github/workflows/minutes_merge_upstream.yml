@@ -1,0 +1,156 @@
+# Check for a newer stable Signal RingRTC tag and open a sync pull request.
+name: Merge RingRTC upstream
+
+on:
+  schedule:
+    - cron: "30 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      ringrtc_ref:
+        description: "Stable Signal RingRTC tag, or 'latest'"
+        required: true
+        default: latest
+        type: string
+      dry_run:
+        description: "Only report whether a newer stable tag exists"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: minutes-ringrtc-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check stable RingRTC version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should_sync: ${{ steps.resolve.outputs.should_sync }}
+      ringrtc_ref: ${{ steps.resolve.outputs.ringrtc_ref }}
+    steps:
+      - name: Checkout Minutes RingRTC
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Test maintenance tooling
+        run: python -m unittest bin.tests.test_minutes_upstream -v
+      - name: Resolve requested upstream ref
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REQUESTED_REF: ${{ inputs.ringrtc_ref }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ "${DRY_RUN}" != "true" ]; then
+            REF="${REQUESTED_REF}"
+            if [ "${REF}" = "latest" ]; then
+              REF="$(python bin/minutes_upstream.py latest)"
+            fi
+            python -c 'import sys; sys.path.insert(0, "bin"); from minutes_version import parse_upstream_tag; parse_upstream_tag(sys.argv[1])' "${REF}"
+            echo "should_sync=true" >> "$GITHUB_OUTPUT"
+            echo "ringrtc_ref=${REF}" >> "$GITHUB_OUTPUT"
+          else
+            python bin/minutes_upstream.py check
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "should_sync=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+  merge-upstream:
+    name: Merge Signal RingRTC
+    needs: check
+    if: needs.check.outputs.should_sync == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Minutes RingRTC
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Create sync branch
+        shell: bash
+        run: |
+          BRANCH="sync/ringrtc-${GITHUB_RUN_ID}"
+          echo "SYNC_BRANCH=${BRANCH}" >> "$GITHUB_ENV"
+          git checkout -b "${BRANCH}"
+      - name: Merge Signal RingRTC
+        env:
+          RINGRTC_REF: ${{ needs.check.outputs.ringrtc_ref }}
+        run: python bin/minutes_upstream.py merge "${RINGRTC_REF}"
+      - name: Prepare stable upstream metadata
+        if: startsWith(needs.check.outputs.ringrtc_ref, 'v')
+        env:
+          RINGRTC_REF: ${{ needs.check.outputs.ringrtc_ref }}
+        run: python bin/minutes_version.py prepare-upstream "${RINGRTC_REF}"
+      - name: Regenerate patch documentation
+        run: python bin/minutes_patch_manifest.py render
+      - name: Validate fork metadata and patch coverage
+        run: |
+          python bin/minutes_version.py validate
+          python bin/minutes_patch_manifest.py check --include-working-tree
+      - name: Run maintenance tests
+        run: python -m unittest discover -s bin/tests -p 'test_*.py' -v
+      - name: Test Node compatibility package
+        working-directory: src/node
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          npm run test:distribution
+      - name: Commit generated metadata
+        shell: bash
+        run: |
+          if ! git diff --quiet; then
+            git add config/minutes_desktop_artifacts.json \
+              config/minutes_fork_patch_manifest.json \
+              docs/MINUTES-PATCHES.md MINUTES-CHANGELOG.md \
+              src/node/package.json src/node/package-lock.json \
+              src/node/prebuilds.json
+            git commit -m "chore: prepare Minutes metadata after RingRTC sync"
+          fi
+      - name: Push sync branch
+        run: git push origin "HEAD:${SYNC_BRANCH}"
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RINGRTC_REF: ${{ needs.check.outputs.ringrtc_ref }}
+        shell: bash
+        run: |
+          REF="${RINGRTC_REF}"
+          gh pr create \
+            --base main \
+            --head "${SYNC_BRANCH}" \
+            --title "Sync RingRTC (${REF})" \
+            --body "$(cat <<EOF
+          Automated merge from [signalapp/ringrtc](https://github.com/signalapp/ringrtc).
+
+          **RingRTC ref:** \`${REF}\`
+
+          ## Review checklist
+          - [ ] Upstream behavior was preserved while resolving conflicts
+          - [ ] \`docs/MINUTES-PATCHES.md\` matches every inherited file touched by Minutes
+          - [ ] Audio capture is still post-mute/post-APM and remote audio is pre-playout
+          - [ ] Video tap still exposes screen share only, never camera frames
+          - [ ] Tap buffers remain bounded and non-blocking
+          - [ ] Native artifact matrix and checksum-pinned package build successfully
+          - [ ] Relevant upstream changes are summarized in \`MINUTES-CHANGELOG.md\`
+          EOF
+          )"

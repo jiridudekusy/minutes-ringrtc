@@ -15,7 +15,7 @@ TARGET_ARCH=${TARGET_ARCH:-$(uname -m)}
 
 usage()
 {
-    echo 'usage: build-desktop [-d|-r|-c] [--webrtc-only|--ringrtc-only|--call-sim-cli-only] [--no-electron] [--no-call-sim-cli] [--archive-webrtc] [--test-ringrtc-adm]
+    echo 'usage: build-desktop [-d|-r|-c] [--webrtc-only|--ringrtc-only|--call-sim-cli-only] [--no-electron] [--no-call-sim-cli] [--archive-webrtc] [--test-ringrtc-adm] [--test-processed-audio-frame-processor]
     where:
         -d to create a debug build (default)
         -r to create a release build
@@ -25,6 +25,7 @@ usage()
         --ringrtc-only builds libringrtc-ARCH.node only
         --webrtc-tests also builds webrtc tests
         --test-ringrtc-adm also tests the ringrtc ADM.
+        --test-processed-audio-frame-processor builds and runs the post-APM tap test.
 
         --archive-webrtc generates an archive suitable for later --ringrtc-only builds'
 }
@@ -45,6 +46,7 @@ SKIP_ELECTRON=
 ARCHIVE_WEBRTC=
 TEST_RINGRTC_ADM=
 TEST_RINGRTC_ADM_UTILS=
+TEST_PROCESSED_AUDIO_FRAME_PROCESSOR=
 
 while [ "$1" != "" ]; do
     case $1 in
@@ -80,6 +82,9 @@ while [ "$1" != "" ]; do
             ;;
         --test-ringrtc-adm-utils )
             TEST_RINGRTC_ADM_UTILS=yes
+            ;;
+        --test-processed-audio-frame-processor )
+            TEST_PROCESSED_AUDIO_FRAME_PROCESSOR=yes
             ;;
         -c | --clean )
             clean
@@ -128,7 +133,7 @@ then
 
     WEBRTC_ARGS="target_cpu=\"${GN_ARCH}\" rtc_build_examples=false rtc_build_tools=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=true rtc_disable_metrics=true rtc_disable_trace_events=true use_siso=true rtc_opus_support_dred=true"
 
-    if [ -n "${BUILD_WEBRTC_TESTS}" ]
+    if [ -n "${BUILD_WEBRTC_TESTS}" ] || [ -n "${TEST_PROCESSED_AUDIO_FRAME_PROCESSOR}" ]
     then
       WEBRTC_ARGS="${WEBRTC_ARGS} rtc_include_tests=true rtc_enable_protobuf=true"
     else
@@ -159,6 +164,16 @@ then
         cd src/webrtc/src
         gn gen -C "out/${BUILD_TYPE}" "--args=${WEBRTC_ARGS}"
         third_party/siso/cipd/siso ninja -C "out/${BUILD_TYPE}" webrtc
+        if [ -n "${TEST_PROCESSED_AUDIO_FRAME_PROCESSOR}" ]
+        then
+          third_party/siso/cipd/siso ninja -C "out/${BUILD_TYPE}" ringrtc/rffi:ringrtc_rffi_unittests
+          TEST_BINARY="out/${BUILD_TYPE}/ringrtc_rffi_unittests"
+          if [ -f "${TEST_BINARY}.exe" ]
+          then
+            TEST_BINARY="${TEST_BINARY}.exe"
+          fi
+          "${TEST_BINARY}"
+        fi
         if [ -n "${BUILD_WEBRTC_TESTS}" ]
         then
           third_party/siso/cipd/siso ninja -C "out/${BUILD_TYPE}" default
