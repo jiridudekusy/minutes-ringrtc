@@ -10,9 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
-    - run: rustup toolchain install nightly --profile minimal --component rustfmt
+    - run: rustup toolchain install nightly-2026-08-07 --profile minimal --component rustfmt
     - name: Check rust format
-      run: cargo +nightly fmt -- --check
+      run: cargo +nightly-2026-08-07 fmt -- --check
     - name: Install for node
       run: npm ci --ignore-scripts
       working-directory: src/node

@@ -5,6 +5,8 @@ upstream release history remains in `CHANGELOG.md`.
 
 ## [Unreleased]
 
+- Synchronize the Signal RingRTC baseline from 2.69.7 to 2.70.2.
+
 - Add automated stable-upstream detection, sync pull requests, release versioning,
   and a machine-verified fork patch manifest.
 - Add Linux x64 to the checksum-pinned native addon release matrix.
