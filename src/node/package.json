@@ -1,6 +1,6 @@
 {
   "name": "@minutes/ringrtc",
-  "version": "2.69.7-minutes.3",
+  "version": "2.70.2-minutes.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/jiridudekusy/minutes-ringrtc.git",
@@ -35,7 +35,7 @@
     "prepublishOnly": "node scripts/prepublish.js"
   },
   "config": {
-    "upstreamVersion": "2.69.7",
+    "upstreamVersion": "2.70.2",
     "tapApiVersion": 1,
     "releaseRepository": "jiridudekusy/minutes-ringrtc"
   },

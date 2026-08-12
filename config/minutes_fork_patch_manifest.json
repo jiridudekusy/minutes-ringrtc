@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "upstreamRepository": "signalapp/ringrtc",
-  "upstreamTag": "v2.69.7",
+  "upstreamTag": "v2.70.2",
   "upstreamPatches": [
     {
       "path": ".gitattributes",

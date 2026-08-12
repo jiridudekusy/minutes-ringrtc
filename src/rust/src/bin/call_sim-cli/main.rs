@@ -265,7 +265,10 @@ fn main() -> Result<()> {
         .level(LevelFilter::Debug);
 
     if let Some(log_file) = args.log_file {
-        fern_logger.chain(fern::log_file(log_file)?).apply()?;
+        fern_logger
+            .chain(std::io::stdout())
+            .chain(fern::log_file(log_file)?)
+            .apply()?;
     } else {
         fern_logger.chain(std::io::stdout()).apply()?;
     }
@@ -348,7 +351,8 @@ fn main() -> Result<()> {
             fast_accelerate: args.audio_jitter_buffer_fast_accelerate,
         },
         audio_rtcp_report_interval_ms: args.audio_rtcp_report_interval_ms,
-        enable_vp9: args.vp9,
+        enable_vp9_encode: args.vp9,
+        enable_vp9_decode: args.vp9,
     };
 
     let mut scenario = ScenarioManager::new()?;
