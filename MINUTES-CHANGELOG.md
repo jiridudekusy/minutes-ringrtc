@@ -5,6 +5,10 @@ upstream release history remains in `CHANGELOG.md`.
 
 ## [Unreleased]
 
+- (add release notes)
+
+## [2.70.2-minutes.2] - 2026-08-12
+
 - Make release version tests independent of the live changelog contents and
   explicitly dispatch native addon builds after creating a release tag.
 
