@@ -34,6 +34,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Run maintenance tests
+        run: python -m unittest discover -s bin/tests -p 'test_*.py' -v
       - name: Prepare next Minutes revision
         id: version
         shell: bash
@@ -49,8 +51,6 @@ jobs:
           NOTES_FILE="${RUNNER_TEMP}/minutes-ringrtc-release-notes.md"
           python bin/minutes_changelog.py "${{ steps.version.outputs.version }}" > "${NOTES_FILE}"
           test -s "${NOTES_FILE}"
-      - name: Run maintenance tests
-        run: python -m unittest discover -s bin/tests -p 'test_*.py' -v
       - name: Commit and tag release
         if: inputs.dry_run != true
         shell: bash
