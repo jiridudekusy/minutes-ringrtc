@@ -188,6 +188,16 @@ class MinutesVersionTest(unittest.TestCase):
         self.assertEqual(validate(self.root), expected)
 
     def test_release_increments_only_minutes_revision_and_promotes_notes(self) -> None:
+        changelog_path = self.root / CHANGELOG
+        changelog = changelog_path.read_text(encoding="utf-8")
+        changelog_path.write_text(
+            changelog.replace(
+                "## [Unreleased]\n",
+                "## [Unreleased]\n\n- Test release note.\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
         revision = int(self.initial_package.rsplit(".", 1)[1]) + 1
         expected = f"{self.initial_upstream}-minutes.{revision}"
         result = prepare_release(self.root, "2026-08-05")
