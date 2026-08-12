@@ -10,6 +10,7 @@ on:
         type: boolean
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -62,3 +63,11 @@ jobs:
           git push origin HEAD:main
           git tag -a "${{ steps.version.outputs.tag }}" -m "Minutes RingRTC ${{ steps.version.outputs.version }}"
           git push origin "${{ steps.version.outputs.tag }}"
+      - name: Dispatch release artifact build
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh workflow run minutes_desktop_artifacts.yml
+          --repo "${GITHUB_REPOSITORY}"
+          --ref "${{ steps.version.outputs.tag }}"
