@@ -26,6 +26,7 @@ CHECKSUMS = PROJECT_DIR / "config" / "webrtc_artifact_checksums.json"
 MANIFEST = PROJECT_DIR / "config" / "minutes_desktop_artifacts.json"
 NODE_PACKAGE = PROJECT_DIR / "src" / "node" / "package.json"
 WORKFLOW = PROJECT_DIR / ".github" / "workflows" / "minutes_desktop_artifacts.yml"
+BUILD_DESKTOP = PROJECT_DIR / "bin" / "build-desktop"
 
 
 class MinutesDesktopArtifactsTest(unittest.TestCase):
@@ -463,6 +464,37 @@ class MinutesDesktopArtifactsTest(unittest.TestCase):
             if action.startswith("./"):
                 continue
             self.assertRegex(action, r"@[a-f0-9]{40}$")
+
+    def test_audio_tap_test_build_is_replaced_by_production_webrtc(self) -> None:
+        script = BUILD_DESKTOP.read_text(encoding="utf-8")
+
+        self.assertIn(
+            'WEBRTC_PRODUCTION_ARGS="${WEBRTC_COMMON_ARGS} '
+            'rtc_include_tests=false rtc_enable_protobuf=false '
+            'rtc_disable_metrics=true"',
+            script,
+        )
+        test_run = script.index('          "${TEST_BINARY}"')
+        production_rebuild = script.index(
+            '          echo "Rebuilding WebRTC with production settings"'
+        )
+        license_generation = script.index(
+            "        tools_webrtc/libs/generate_licenses.py"
+        )
+        self.assertLess(test_run, production_rebuild)
+        self.assertLess(production_rebuild, license_generation)
+        self.assertIn(
+            'gn gen -C "out/${BUILD_TYPE}" '
+            '"--args=${WEBRTC_PRODUCTION_ARGS}"',
+            script,
+        )
+        self.assertIn('"rtc_include_tests = false"', script)
+        self.assertIn('"rtc_enable_protobuf = false"', script)
+        self.assertIn('"rtc_disable_metrics = true"', script)
+        self.assertIn(
+            'grep -Fqx "${EXPECTED_WEBRTC_ARG}" "${WEBRTC_ARGS_FILE}"',
+            script,
+        )
 
 
 if __name__ == "__main__":

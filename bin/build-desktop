@@ -131,18 +131,11 @@ if [ "${BUILD_WHAT}" = "all" ] || [ "${BUILD_WHAT}" = "webrtc" ]
 then
     echo "Building WebRTC for ${GN_ARCH}"
 
-    WEBRTC_ARGS="target_cpu=\"${GN_ARCH}\" rtc_build_examples=false rtc_build_tools=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=true rtc_disable_trace_events=true use_siso=true rtc_opus_support_dred=true"
-
-    if [ -n "${BUILD_WEBRTC_TESTS}" ] || [ -n "${TEST_PROCESSED_AUDIO_FRAME_PROCESSOR}" ]
-    then
-      WEBRTC_ARGS="${WEBRTC_ARGS} rtc_include_tests=true rtc_enable_protobuf=true rtc_disable_metrics=false"
-    else
-      WEBRTC_ARGS="${WEBRTC_ARGS} rtc_include_tests=false rtc_enable_protobuf=false rtc_disable_metrics=true"
-    fi
+    WEBRTC_COMMON_ARGS="target_cpu=\"${GN_ARCH}\" rtc_build_examples=false rtc_build_tools=false rtc_use_x11=false rtc_enable_sctp=false rtc_libvpx_build_vp9=true rtc_disable_trace_events=true use_siso=true rtc_opus_support_dred=true"
 
     if [ "${BUILD_TYPE}" = "release" ]
     then
-        WEBRTC_ARGS="${WEBRTC_ARGS} is_debug=false symbol_level=1"
+        WEBRTC_COMMON_ARGS="${WEBRTC_COMMON_ARGS} is_debug=false symbol_level=1"
     fi
 
     # SME requires the ARMv9-A architecture, while most ARM64 devices are ARMv8. This was causing
@@ -151,13 +144,21 @@ then
     # https://chromium.googlesource.com/libyuv/libyuv/+/61354d2671d9b5c73cc964415fe25bc76cea051a/BUILD.gn#273
     if [ "$(uname)" = "Linux" ] && [ "${TARGET_ARCH}" = "arm64" ]
     then
-      WEBRTC_ARGS="${WEBRTC_ARGS} libyuv_use_sme=false"
+      WEBRTC_COMMON_ARGS="${WEBRTC_COMMON_ARGS} libyuv_use_sme=false"
 
       # Ensure that experimental compact relocation is disabled until we can use lld.
       # https://issues.webrtc.org/issues/407797634
       # https://chromium-review.googlesource.com/c/chromium/src/+/5938657
       # Comment out the line that enables experimental crel.
       sed -i '/^[^#].*--allow-experimental-crel/ s/^/#/' src/webrtc/src/build/config/compiler/BUILD.gn
+    fi
+
+    WEBRTC_PRODUCTION_ARGS="${WEBRTC_COMMON_ARGS} rtc_include_tests=false rtc_enable_protobuf=false rtc_disable_metrics=true"
+    if [ -n "${BUILD_WEBRTC_TESTS}" ] || [ -n "${TEST_PROCESSED_AUDIO_FRAME_PROCESSOR}" ]
+    then
+      WEBRTC_ARGS="${WEBRTC_COMMON_ARGS} rtc_include_tests=true rtc_enable_protobuf=true rtc_disable_metrics=false"
+    else
+      WEBRTC_ARGS="${WEBRTC_PRODUCTION_ARGS}"
     fi
 
     (
@@ -181,6 +182,30 @@ then
           download_from_google_storage --directory --recursive \
                --num_threads=10 --no_auth --quiet \
                --bucket chromium-webrtc-resources resources
+        fi
+        # The focused audio processor test needs rtc_include_tests, but release addons must link
+        # the same production WebRTC configuration as upstream RingRTC. Re-run GN and Ninja after
+        # the focused test so the copied archive below never contains the test configuration.
+        if [ -n "${TEST_PROCESSED_AUDIO_FRAME_PROCESSOR}" ] && [ -z "${BUILD_WEBRTC_TESTS}" ]
+        then
+          echo "Rebuilding WebRTC with production settings"
+          gn gen -C "out/${BUILD_TYPE}" "--args=${WEBRTC_PRODUCTION_ARGS}"
+          third_party/siso/cipd/siso ninja -C "out/${BUILD_TYPE}" webrtc
+        fi
+        if [ -z "${BUILD_WEBRTC_TESTS}" ]
+        then
+          WEBRTC_ARGS_FILE="out/${BUILD_TYPE}/args.gn"
+          for EXPECTED_WEBRTC_ARG in \
+            "rtc_include_tests = false" \
+            "rtc_enable_protobuf = false" \
+            "rtc_disable_metrics = true"
+          do
+            if ! grep -Fqx "${EXPECTED_WEBRTC_ARG}" "${WEBRTC_ARGS_FILE}"
+            then
+              echo "WebRTC production setting missing: ${EXPECTED_WEBRTC_ARG}" >&2
+              exit 1
+            fi
+          done
         fi
         tools_webrtc/libs/generate_licenses.py --target :webrtc "out/${BUILD_TYPE}" "out/${BUILD_TYPE}"
     )

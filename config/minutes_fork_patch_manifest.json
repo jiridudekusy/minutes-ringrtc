@@ -17,7 +17,7 @@
     },
     {
       "path": "bin/build-desktop",
-      "purpose": "Build and exercise the fork-owned post-APM WebRTC processor test."
+      "purpose": "Exercise the fork-owned post-APM processor test, then rebuild WebRTC with production settings."
     },
     {
       "path": "bin/gsync-webrtc",
