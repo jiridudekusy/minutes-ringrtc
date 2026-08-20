@@ -5,6 +5,10 @@ upstream release history remains in `CHANGELOG.md`.
 
 ## [Unreleased]
 
+- (add release notes)
+
+## [2.70.2-minutes.3] - 2026-08-20
+
 - Rebuild WebRTC with production settings after running the post-APM audio tap
   test so published native addons match upstream release configuration.
 
