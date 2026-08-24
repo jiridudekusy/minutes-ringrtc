@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "upstreamRepository": "signalapp/ringrtc",
-  "upstreamTag": "v2.70.2",
+  "upstreamTag": "v2.71.0",
   "upstreamPatches": [
     {
       "path": ".gitattributes",
@@ -60,8 +60,8 @@
       "purpose": "Install the post-APM local audio processor and remote playout observer hooks."
     },
     {
-      "path": "src/rust/src/webrtc/ffi/audio_device_module.rs",
-      "purpose": "Expose the WebRTC audio processor callback required by the post-APM tap."
+      "path": "src/rust/src/webrtc/audio_device_module_callbacks.rs",
+      "purpose": "Expose the non-blocking WebRTC audio processor callback required by the post-APM tap."
     },
     {
       "path": "src/rust/src/webrtc/peer_connection_factory.rs",

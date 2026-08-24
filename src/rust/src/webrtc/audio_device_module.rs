@@ -21,16 +21,20 @@ use std::{
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use cubeb::{Context, DeviceId, MonoFrame, StereoFrame, Stream, StreamPrefs};
 use cubeb_core::{InputProcessingParams, LogLevel, log_enabled, set_logging};
+#[cfg(not(feature = "sim"))]
+use webrtc::ffi::audio_device_module::{Rust_needMorePlayData, Rust_recordedDataIsAvailable};
+#[cfg(feature = "sim")]
+use webrtc::sim::audio_device_module::{Rust_needMorePlayData, Rust_recordedDataIsAvailable};
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Com;
 
 use crate::{
     audio_tap::{AudioTap, AudioTapChunk, AudioTapSource},
+    core::util::truncate_for_logging,
     webrtc,
     webrtc::{
         audio_device_module_utils::{
             DeviceCollectionWrapper, copy_and_truncate_string, do_cubeb_redactions,
-            redact_for_logging,
         },
         peer_connection_factory::{AudioDevice, AudioDeviceObserver},
     },
@@ -708,16 +712,12 @@ impl Worker {
                     }
                 }
                 Event::SetPlayoutDeviceById(ref id) => {
-                    if let Some(d) = self.output_device_cache.iter().find(|d| {
-                        d.device_id
-                            .as_ref()
-                            .is_some_and(|actual_id| actual_id == id)
-                    }) {
+                    if let Some(d) = self.output_device_cache.iter().find(|d| &d.device_id == id) {
                         self.update_playout_device(d.devid)
                     } else {
                         Err(anyhow!(
                             "Invalid playout device id {} requested",
-                            redact_for_logging(id)
+                            truncate_for_logging(id)
                         ))
                     }
                 }
@@ -733,16 +733,12 @@ impl Worker {
                     }
                 }
                 Event::SetRecordingDeviceById(ref id) => {
-                    if let Some(d) = self.input_device_cache.iter().find(|d| {
-                        d.device_id
-                            .as_ref()
-                            .is_some_and(|actual_id| actual_id == id)
-                    }) {
+                    if let Some(d) = self.input_device_cache.iter().find(|d| &d.device_id == id) {
                         self.update_recording_device(d.devid)
                     } else {
                         Err(anyhow!(
                             "Invalid recording device id {} requested",
-                            redact_for_logging(id)
+                            truncate_for_logging(id)
                         ))
                     }
                 }
@@ -797,7 +793,7 @@ impl Worker {
         // * The local new_mic_level pointer is valid and this function is synchronous, so it'll
         //   remain valid while it runs.
         let ret = unsafe {
-            crate::webrtc::ffi::audio_device_module::Rust_recordedDataIsAvailable(
+            Rust_recordedDataIsAvailable(
                 samples.as_ptr() as *const c_void,
                 samples.len(),
                 std::mem::size_of::<i16>(),
@@ -826,7 +822,7 @@ impl Worker {
         // * The local variable pointers are all valid and this function is synchronous, so they'll
         //   remain valid while it runs.
         let ret = unsafe {
-            crate::webrtc::ffi::audio_device_module::Rust_needMorePlayData(
+            Rust_needMorePlayData(
                 samples,
                 std::mem::size_of::<i16>(),
                 channels.try_into().unwrap(), // constant, so unwrap is safe
@@ -1066,24 +1062,9 @@ fn log_c_str(s: &CStr) {
 
     match s.to_str() {
         Ok(msg) => {
-            if msg.contains("DeviceID") && msg.contains("Name") {
-                // Shortcut:
-                // Entirely suppress spammy lines that log all devices (we already do this)
-                // See `log_device` in cubeb.c
-                return;
+            if let Some(s) = do_cubeb_redactions(msg) {
+                info!("cubeb: {s}");
             }
-
-            // Assume valid lines are formatted "file:lineno:" and ignore anything
-            // not matching
-            let identifier_re = regex_aot::regex!(r"[^\s]+:\d+:");
-
-            let Some(m) = identifier_re.find(msg) else {
-                return;
-            };
-            let ident = &msg[m.start()..m.end()];
-            let contents = &msg[m.end()..];
-
-            info!("cubeb: {ident}{}", do_cubeb_redactions(contents.into()));
         }
         Err(e) => {
             warn!("cubeb log message not UTF-8: {:?}", e);
@@ -1214,9 +1195,9 @@ impl AudioDeviceModule {
             ),
             device.devid(),
             // Truncate these fields, as they can contain e.g. mac addresses or user-specified names.
-            device.device_id().map(redact_for_logging),
-            device.friendly_name().map(redact_for_logging),
-            device.group_id().map(redact_for_logging),
+            device.device_id().map(truncate_for_logging),
+            device.friendly_name().map(truncate_for_logging),
+            device.group_id().map(truncate_for_logging),
             device.vendor_name(),
             device.device_type(),
             device.state(),
@@ -1656,7 +1637,7 @@ impl AudioDeviceModule {
             }
             bail!(
                 "No {device_type:?} device with ID {}",
-                redact_for_logging(id)
+                truncate_for_logging(id)
             );
         }
         Ok(())
