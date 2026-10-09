@@ -18,6 +18,7 @@ from minutes_upstream import (  # noqa: E402
     AUTOMATIC_JSON_CONFLICTS,
     has_open_sync_pull_request,
     latest_stable_tag,
+    normalize_ci_runner_labels,
     resolve_version_only_conflicts,
     validate_ref,
 )
@@ -35,6 +36,27 @@ from minutes_version import (  # noqa: E402
 
 
 class MinutesUpstreamTest(unittest.TestCase):
+    def test_normalizes_signal_larger_runner_labels_for_the_fork(self) -> None:
+        source = (
+            "jobs:\n"
+            "  test_binaries:\n"
+            "    runs-on: ubuntu-latest-4-cores\n"
+            "  electron:\n"
+            "    matrix:\n"
+            "      os: [ubuntu-latest-4-cores, windows-latest-8-cores, "
+            "ubuntu-24.04-arm64-4-cores, macos-latest]\n"
+        )
+        expected = (
+            "jobs:\n"
+            "  test_binaries:\n"
+            "    runs-on: ubuntu-latest\n"
+            "  electron:\n"
+            "    matrix:\n"
+            "      os: [ubuntu-latest, windows-latest, ubuntu-24.04-arm, "
+            "macos-latest]\n"
+        )
+        self.assertEqual(normalize_ci_runner_labels(source), expected)
+
     def test_selects_highest_stable_tag_and_ignores_prereleases(self) -> None:
         self.assertEqual(
             latest_stable_tag(

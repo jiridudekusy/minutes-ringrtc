@@ -310,7 +310,8 @@ jobs:
 
   test_binaries:
     name: Build test binaries
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
     - name: Install dependencies
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libpulse-dev libpulse0
