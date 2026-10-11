@@ -1,6 +1,6 @@
 {
   "name": "@minutes/ringrtc",
-  "version": "2.70.2-minutes.3",
+  "version": "2.71.0-minutes.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/jiridudekusy/minutes-ringrtc.git",
@@ -35,14 +35,15 @@
     "prepublishOnly": "node scripts/prepublish.js"
   },
   "config": {
-    "upstreamVersion": "2.70.2",
+    "upstreamVersion": "2.71.0",
     "tapApiVersion": 1,
     "releaseRepository": "jiridudekusy/minutes-ringrtc"
   },
   "author": "",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "https-proxy-agent": "7.0.6"
+    "https-proxy-agent": "7.0.6",
+    "tar": "7.5.22"
   },
   "devDependencies": {
     "@types/chai": "5.2.3",

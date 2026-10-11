@@ -651,9 +651,14 @@ export class RingRTCType {
         callId,
         settings.iceServers,
         settings.hideIp,
-        settings.dataMode,
-        settings.audioLevelsIntervalMillis || 0,
-        settings.dredDuration ?? 0
+        {
+          dataMode: settings.dataMode,
+          dredDuration: settings.dredDuration ?? 0,
+          enableVp9Encode: settings.enableVp9Encode ?? true,
+          enableVp9Decode: settings.enableVp9Decode ?? true,
+          statsIntervalSecs: settings.statsIntervalSecs,
+        },
+        settings.audioLevelsIntervalMillis || 0
       );
     });
   }
@@ -1198,6 +1203,7 @@ export class RingRTCType {
     hkdfExtraInfo: Uint8Array<ArrayBuffer>,
     audioLevelsIntervalMillis: number | undefined,
     dredDuration: number | undefined,
+    svcConfig: GroupCallSvcConfig | undefined,
     observer: GroupCallObserver
   ): GroupCall | undefined {
     const clientId = this.callManager.createGroupCallClient(
@@ -1205,7 +1211,8 @@ export class RingRTCType {
       sfuUrl,
       hkdfExtraInfo,
       audioLevelsIntervalMillis ?? 0,
-      dredDuration ?? 0
+      dredDuration ?? 0,
+      svcConfig
     );
     if (clientId === INVALID_CLIENT_ID) {
       // Return undefined since the group call client creation failed.
@@ -1234,6 +1241,7 @@ export class RingRTCType {
     hkdfExtraInfo: Uint8Array<ArrayBuffer>,
     audioLevelsIntervalMillis: number | undefined,
     dredDuration: number | undefined,
+    svcConfig: GroupCallSvcConfig | undefined,
     observer: GroupCallObserver
   ): GroupCall | undefined {
     const clientId = this.callManager.createCallLinkCallClient(
@@ -1244,7 +1252,8 @@ export class RingRTCType {
       adminPasskey,
       hkdfExtraInfo,
       audioLevelsIntervalMillis || 0,
-      dredDuration ?? 0
+      dredDuration ?? 0,
+      svcConfig
     );
     if (clientId === INVALID_CLIENT_ID) {
       // Return undefined since the call link client creation failed.
@@ -2022,12 +2031,24 @@ export class RingRTCType {
   }
 }
 
+type CallConfig = {
+  dataMode: DataMode;
+  dredDuration: number;
+  enableVp9Encode: boolean;
+  enableVp9Decode: boolean;
+  statsIntervalSecs?: number;
+};
+
 export type CallSettings = {
   iceServers: Array<IceServer>;
   hideIp: boolean;
   dataMode: DataMode;
   audioLevelsIntervalMillis?: number;
   dredDuration?: number;
+  enableVp9Encode?: boolean;
+  enableVp9Decode?: boolean;
+  // If present, sets the stats log interval
+  statsIntervalSecs?: number;
 };
 
 type IceServer = {
@@ -2566,6 +2587,12 @@ export type GroupCallObserver = {
   ): void;
 };
 
+export type GroupCallSvcConfig = {
+  mode: string;
+  modeForScreenshare: string;
+  maxBitrateBps: number | undefined;
+};
+
 export class GroupCall {
   private readonly _kind: GroupCallKind;
   private readonly _callManager: CallManager;
@@ -3058,9 +3085,8 @@ export type CallManager = {
     callId: CallId,
     iceServers: Array<IceServer>,
     hideIp: boolean,
-    dataMode: DataMode,
-    audioLevelsIntervalMillis: number,
-    dredDuration: number
+    callConfig: CallConfig,
+    audioLevelsIntervalMillis: number
   ): void;
   accept(callId: CallId): void;
   ignore(callId: CallId): void;
@@ -3147,7 +3173,8 @@ export type CallManager = {
     sfuUrl: string,
     hkdfExtraInfo: Uint8Array<ArrayBuffer>,
     audioLevelsIntervalMillis: number,
-    dredDuration: number
+    dredDuration: number,
+    svcConfig: GroupCallSvcConfig | undefined
   ): GroupCallClientId;
   createCallLinkCallClient(
     sfuUrl: string,
@@ -3157,7 +3184,8 @@ export type CallManager = {
     adminPasskey: Uint8Array<ArrayBuffer> | undefined,
     hkdfExtraInfo: Uint8Array<ArrayBuffer>,
     audioLevelsIntervalMillis: number,
-    dredDuration: number
+    dredDuration: number,
+    svcConfig: GroupCallSvcConfig | undefined
   ): GroupCallClientId;
   deleteGroupCallClient(clientId: GroupCallClientId): void;
   connect(clientId: GroupCallClientId): void;

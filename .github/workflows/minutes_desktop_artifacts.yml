@@ -125,7 +125,6 @@ jobs:
         run: >-
           bash bin/build-desktop
           --release
-          --no-call-sim-cli
           --test-processed-audio-frame-processor
       - name: Verify native addon
         shell: bash

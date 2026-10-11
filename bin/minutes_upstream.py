@@ -30,6 +30,12 @@ AUTOMATIC_JSON_CONFLICTS = {
     "src/node/package.json",
 }
 VERSION_LINE_RE = re.compile(r'^\s*"(?:name|version)"\s*:')
+CI_RUNNER_LABELS = {
+    "ubuntu-latest-4-cores": "ubuntu-latest",
+    "windows-latest-8-cores": "windows-latest",
+    "ubuntu-24.04-arm64-4-cores": "ubuntu-24.04-arm",
+}
+RINGRTC_CI_WORKFLOW = Path(".github/workflows/ringrtc.yml")
 
 
 def latest_stable_tag(tags: Iterable[str]) -> str:
@@ -145,6 +151,13 @@ def validate_ref(ref: str) -> None:
         raise ValueError(f"Unsafe RingRTC ref: {ref}")
 
 
+def normalize_ci_runner_labels(source: str) -> str:
+    """Map Signal organization runner labels to public fork runners."""
+    for upstream_label, fork_label in CI_RUNNER_LABELS.items():
+        source = source.replace(upstream_label, fork_label)
+    return source
+
+
 def resolve_version_only_conflicts(source: str) -> str:
     """Choose Minutes metadata in conflict hunks containing name/version only."""
     output: list[str] = []
@@ -227,6 +240,14 @@ def merge(ref: str) -> None:
         print("Resolving generated package metadata: " + ", ".join(resolved))
         run(["git", "add", "--", *resolved])
         run(["git", "commit", "--no-edit"])
+    workflow_path = ROOT / RINGRTC_CI_WORKFLOW
+    workflow_source = workflow_path.read_text(encoding="utf-8")
+    normalized_workflow = normalize_ci_runner_labels(workflow_source)
+    if normalized_workflow != workflow_source:
+        workflow_path.write_text(normalized_workflow, encoding="utf-8")
+        print("Normalizing Signal CI runner labels for the public fork")
+        run(["git", "add", "--", str(RINGRTC_CI_WORKFLOW)])
+        run(["git", "commit", "-m", "Normalize CI runner labels for Minutes"])
     print("Review docs/MINUTES-PATCHES.md and run the patch-manifest check.")
 
 

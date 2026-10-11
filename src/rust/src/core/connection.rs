@@ -19,7 +19,7 @@ use std::{
 use bytes::BytesMut;
 use hkdf::Hkdf;
 use prost::Message;
-use rand::rngs::OsRng;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -1636,9 +1636,8 @@ where
         self.set_incoming_media(incoming_media)
     }
 
-    /// Connect incoming media (stored by webrtc.incoming_media) to the call, and enable
-    /// audio playout, incoming and outgoing RTP, and finally audio recording. The client
-    /// should be notified that media is flowing.
+    /// Connect incoming media (stored by webrtc.incoming_media) to the call and start
+    /// audio and RTP flows. The client should be notified that media is flowing.
     pub fn enable_media(&self) -> Result<()> {
         info!("enable_media(): id: {}", self.connection_id);
 
@@ -1649,10 +1648,21 @@ where
 
         let webrtc = self.webrtc.lock()?;
         let pc = webrtc.peer_connection()?;
-        pc.set_audio_playout_enabled(true);
-        pc.set_incoming_media_enabled(true);
-        pc.set_outgoing_media_enabled(true);
-        pc.set_audio_recording_enabled(true);
+        if self.direction() == CallDirection::Incoming {
+            // callee dictates accept timing and can send media first
+            // so setup outgoing/recording before setting up incoming/playout
+            pc.set_outgoing_media_enabled(true);
+            pc.set_audio_recording_enabled(true);
+            pc.set_audio_playout_enabled(true);
+            pc.set_incoming_media_enabled(true);
+        } else {
+            // caller waits for accept and prioritizes receiving media first
+            // so setup incoming/playout before setting up outgoing/recording
+            pc.set_audio_playout_enabled(true);
+            pc.set_incoming_media_enabled(true);
+            pc.set_outgoing_media_enabled(true);
+            pc.set_audio_recording_enabled(true);
+        }
 
         let incoming_media = match webrtc.incoming_media.as_ref() {
             Some(v) => v,
@@ -2302,7 +2312,7 @@ where
 }
 
 fn generate_local_secret_and_public_key() -> Result<(StaticSecret, PublicKey)> {
-    let secret = StaticSecret::random_from_rng(OsRng);
+    let secret = StaticSecret::random_from_rng(&mut UnwrapErr(SysRng));
     let public = PublicKey::from(&secret);
     Ok((secret, public))
 }
@@ -2427,7 +2437,7 @@ mod tests {
 
     #[test]
     fn negotiate_srtp_keys_rejects_low_order_remote_key() {
-        let local_secret = StaticSecret::random_from_rng(OsRng);
+        let local_secret = StaticSecret::random_from_rng(&mut UnwrapErr(SysRng));
         let low_order_key = [0u8; 32];
         let result =
             negotiate_srtp_keys(&local_secret, &low_order_key, b"caller_key", b"callee_key");

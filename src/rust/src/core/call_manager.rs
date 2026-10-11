@@ -11,13 +11,12 @@ use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     fmt, stringify,
-    sync::{Arc, MutexGuard},
+    sync::{Arc, LazyLock, MutexGuard},
     thread,
     time::{Duration, Instant, SystemTime},
 };
 
 use bytes::{Bytes, BytesMut};
-use lazy_static::lazy_static;
 use prost::Message;
 use zkgroup::call_links::CallLinkSecretParams;
 
@@ -64,16 +63,16 @@ use crate::{
 pub const MAX_MESSAGE_AGE: Duration = Duration::from_secs(60);
 const TIME_OUT_PERIOD: Duration = Duration::from_secs(60);
 
-lazy_static! {
-    static ref INCOMING_GROUP_CALL_RING_TIME: Duration =
-        std::env::var("INCOMING_GROUP_CALL_RING_SECS")
-            .ok()
-            .map(|secs| secs
-                .parse()
-                .expect("INCOMING_GROUP_CALL_RING_SECS must be an integer"))
-            .map(Duration::from_secs)
-            .unwrap_or(TIME_OUT_PERIOD);
-}
+static INCOMING_GROUP_CALL_RING_TIME: LazyLock<Duration> = LazyLock::new(|| {
+    std::env::var("INCOMING_GROUP_CALL_RING_SECS")
+        .ok()
+        .map(|secs| {
+            secs.parse()
+                .expect("INCOMING_GROUP_CALL_RING_SECS must be an integer")
+        })
+        .map(Duration::from_secs)
+        .unwrap_or(TIME_OUT_PERIOD)
+});
 
 /// Spawns a task on the worker thread to handle an API
 /// request with error handling.
@@ -390,6 +389,42 @@ struct GroupCallClient {
     /// clients can exist, but only one of those can be active at a time. A client is
     /// considered `active` until the UI initiates a `disconnect`.
     active: bool,
+}
+
+#[derive(Debug)]
+pub struct SvcConfig {
+    pub mode: String,
+    pub mode_for_screenshare: String,
+    pub max_bitrate_bps: Option<i32>,
+}
+
+pub struct CreateGroupCallParams {
+    pub group_id: group_call::GroupId,
+    pub sfu_url: String,
+    pub hkdf_extra_info: Vec<u8>,
+    pub audio_levels_interval: Option<Duration>,
+    pub dred_duration: u8,
+    pub svc_config: Option<SvcConfig>,
+    pub peer_connection_factory: Option<PeerConnectionFactory>,
+    pub outgoing_audio_track: AudioTrack,
+    pub outgoing_video_track: VideoTrack,
+    pub incoming_video_sink: Option<Box<dyn VideoSink>>,
+}
+
+pub struct CreateCallLinkCallParams<'a> {
+    pub sfu_url: String,
+    pub endorsement_public_key: &'a [u8],
+    pub auth_presentation: &'a [u8],
+    pub root_key: CallLinkRootKey,
+    pub admin_passkey: Option<Vec<u8>>,
+    pub hkdf_extra_info: Vec<u8>,
+    pub audio_levels_interval: Option<Duration>,
+    pub dred_duration: u8,
+    pub svc_config: Option<SvcConfig>,
+    pub peer_connection_factory: Option<PeerConnectionFactory>,
+    pub outgoing_audio_track: AudioTrack,
+    pub outgoing_video_track: VideoTrack,
+    pub incoming_video_sink: Option<Box<dyn VideoSink>>,
 }
 
 pub struct CallManager<T>
@@ -926,7 +961,7 @@ where
         for i in 0..3 {
             info!("synchronize(): pass: {}", i);
             let mut calls = self.call_by_call_id.lock()?.clone();
-            for (_, call) in calls.iter_mut() {
+            for call in calls.values_mut() {
                 info!("synchronize(): syncing call: {}", call.call_id());
                 call.synchronize()?;
             }
@@ -1977,7 +2012,7 @@ where
 
     #[cfg(feature = "sim")]
     pub fn age_all_outstanding_group_rings(&mut self, age: Duration) {
-        for (_group_id, ring) in self.outstanding_group_rings.lock().unwrap().iter_mut() {
+        for ring in self.outstanding_group_rings.lock().unwrap().values_mut() {
             ring.received -= age;
         }
     }
@@ -3021,19 +3056,23 @@ where
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn create_group_call_client(
         &mut self,
-        group_id: group_call::GroupId,
-        sfu_url: String,
-        hkdf_extra_info: Vec<u8>,
-        audio_levels_interval: Option<Duration>,
-        dred_duration: u8,
-        peer_connection_factory: Option<PeerConnectionFactory>,
-        outgoing_audio_track: AudioTrack,
-        outgoing_video_track: VideoTrack,
-        incoming_video_sink: Option<Box<dyn VideoSink>>,
+        params: CreateGroupCallParams,
     ) -> Result<group_call::ClientId> {
+        let CreateGroupCallParams {
+            group_id,
+            sfu_url,
+            hkdf_extra_info,
+            audio_levels_interval,
+            dred_duration,
+            svc_config,
+            peer_connection_factory,
+            outgoing_audio_track,
+            outgoing_video_track,
+            incoming_video_sink,
+        } = params;
+
         info!("create_group_call_client():");
         debug!(
             "  group_id: {} sfu_url: {}",
@@ -3104,6 +3143,7 @@ where
             audio_levels_interval,
             dred_duration,
             group_send_endorsement_cache: None,
+            svc_config,
         })?;
 
         client_by_id.insert(
@@ -3119,22 +3159,26 @@ where
         Ok(client_id)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn create_call_link_call_client(
         &mut self,
-        sfu_url: String,
-        endorsement_public_key: &[u8],
-        auth_presentation: &[u8],
-        root_key: CallLinkRootKey,
-        admin_passkey: Option<Vec<u8>>,
-        hkdf_extra_info: Vec<u8>,
-        audio_levels_interval: Option<Duration>,
-        dred_duration: u8,
-        peer_connection_factory: Option<PeerConnectionFactory>,
-        outgoing_audio_track: AudioTrack,
-        outgoing_video_track: VideoTrack,
-        incoming_video_sink: Option<Box<dyn VideoSink>>,
-    ) -> Result<group_call::ClientId> {
+        params: CreateCallLinkCallParams,
+    ) -> Result<ClientId> {
+        let CreateCallLinkCallParams {
+            sfu_url,
+            endorsement_public_key,
+            auth_presentation,
+            root_key,
+            admin_passkey,
+            hkdf_extra_info,
+            audio_levels_interval,
+            dred_duration,
+            svc_config,
+            peer_connection_factory,
+            outgoing_audio_track,
+            outgoing_video_track,
+            incoming_video_sink,
+        } = params;
+
         info!("create_call_link_call_client():");
         let room_id: group_call::GroupId = root_key.derive_room_id();
         debug!(
@@ -3212,6 +3256,7 @@ where
             audio_levels_interval,
             dred_duration,
             group_send_endorsement_cache,
+            svc_config,
         })?;
 
         client_by_id.insert(
@@ -3314,10 +3359,13 @@ where
     forward_group_call_api!(set_sharing_screen(sharing_screen: bool));
     forward_group_call_api!(resend_media_keys());
     forward_group_call_api!(set_data_mode(data_mode: DataMode));
-    forward_group_call_api!(request_video(
-        rendered_resolutions: Vec<group_call::VideoRequest>,
-        active_speaker_height: u16,
-    ), false);
+    forward_group_call_api!(
+        request_video(
+            rendered_resolutions: Vec<group_call::VideoRequest>,
+            active_speaker_height: u16,
+        ),
+        false
+    );
     forward_group_call_api!(approve_user(user_id: UserId));
     forward_group_call_api!(deny_user(user_id: UserId));
     forward_group_call_api!(remove_client(other_client_id: DemuxId));
@@ -3325,6 +3373,9 @@ where
     forward_group_call_api!(set_group_members(members: Vec<GroupMember>));
     forward_group_call_api!(set_membership_proof(proof: Vec<u8>));
     forward_group_call_api!(set_rtc_stats_interval(interval: Duration));
+    forward_group_call_api!(
+        reconfigure_video_encoder_for_screenshare(video_track: VideoTrack, is_screenshare: bool)
+    );
 
     pub fn disconnect(&mut self, client_id: group_call::ClientId) {
         info!("disconnect(): id: {}", client_id);

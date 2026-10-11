@@ -10,18 +10,24 @@
 use std::{
     cell::RefCell,
     env,
+    sync::LazyLock,
     time::{Duration, SystemTime},
 };
 
-use lazy_static::lazy_static;
 use rand::{
-    Rng, SeedableRng,
-    distributions::{Distribution, Standard},
+    RngExt,
+    distr::{Distribution, StandardUniform},
+    rand_core::SeedableRng,
+    rngs::ChaCha20Rng,
 };
-use rand_chacha::ChaCha20Rng;
 use ringrtc::{
     common::{ApplicationEvent, CallEndReason, CallMediaType, DeviceId},
-    core::{call::Call, call_manager::CallManager, connection::Connection, group_call, signaling},
+    core::{
+        call::Call,
+        call_manager::{CallManager, CreateGroupCallParams},
+        connection::Connection,
+        group_call, signaling,
+    },
     lite::http,
     protobuf,
     sim::sim_platform::SimPlatform,
@@ -57,26 +63,24 @@ impl Prng {
 
     pub fn generate<T>(&self) -> T
     where
-        Standard: Distribution<T>,
+        StandardUniform: Distribution<T>,
     {
-        self.rng.borrow_mut().r#gen::<T>()
+        self.rng.borrow_mut().random::<T>()
     }
 }
 
-lazy_static! {
-    static ref RANDOM_SEED: u64 = {
-        let seed = match env::var("RANDOM_SEED") {
-            Ok(v) => v.parse().unwrap(),
-            Err(_) => SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .expect(error_line!())
-                .as_millis() as u64,
-        };
-
-        println!("\n*** Using random seed: {}", seed);
-        seed
+static RANDOM_SEED: LazyLock<u64> = LazyLock::new(|| {
+    let seed = match env::var("RANDOM_SEED") {
+        Ok(v) => v.parse().unwrap(),
+        Err(_) => SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect(error_line!())
+            .as_millis() as u64,
     };
-}
+
+    println!("\n*** Using random seed: {}", seed);
+    seed
+});
 
 pub fn test_init() {
     let _ = env_logger::try_init();
@@ -265,22 +269,29 @@ impl TestContext {
         &self,
         group_id: group_call::GroupId,
     ) -> Result<group_call::ClientId, anyhow::Error> {
-        self.cm().create_group_call_client(
+        self.cm().create_group_call_client(CreateGroupCallParams {
             group_id,
-            "".to_owned(),
-            vec![],
-            None,
-            0,
-            None,
-            ringrtc::webrtc::media::AudioTrack::new(webrtc::Arc::null(), None),
-            ringrtc::webrtc::media::VideoTrack::new(webrtc::Arc::null(), None),
-            None,
-        )
+            sfu_url: "".to_owned(),
+            hkdf_extra_info: vec![],
+            audio_levels_interval: None,
+            dred_duration: 0,
+            svc_config: None,
+            peer_connection_factory: None,
+            outgoing_audio_track: ringrtc::webrtc::media::AudioTrack::new(
+                webrtc::Arc::null(),
+                None,
+            ),
+            outgoing_video_track: ringrtc::webrtc::media::VideoTrack::new(
+                webrtc::Arc::null(),
+                None,
+            ),
+            incoming_video_sink: None,
+        })
     }
 }
 
 pub fn random_received_offer(_prng: &Prng, age: Duration) -> signaling::ReceivedOffer {
-    let local_public_key = rand::thread_rng().r#gen::<[u8; 32]>().to_vec();
+    let local_public_key = rand::rng().random::<[u8; 32]>().to_vec();
     let offer = signaling::Offer::from_v4(
         CallMediaType::Audio,
         protobuf::signaling::ConnectionParametersV4 {
@@ -311,7 +322,7 @@ pub fn random_received_answer(
     _prng: &Prng,
     sender_device_id: DeviceId,
 ) -> signaling::ReceivedAnswer {
-    let local_public_key = rand::thread_rng().r#gen::<[u8; 32]>().to_vec();
+    let local_public_key = rand::rng().random::<[u8; 32]>().to_vec();
     let answer = signaling::Answer::from_v4(protobuf::signaling::ConnectionParametersV4 {
         public_key: Some(local_public_key),
         ice_ufrag: None,
