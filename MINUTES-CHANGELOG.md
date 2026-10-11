@@ -5,6 +5,10 @@ upstream release history remains in `CHANGELOG.md`.
 
 ## [Unreleased]
 
+- (add release notes)
+
+## [2.71.0-minutes.1] - 2026-10-11
+
 - Synchronize the Signal RingRTC baseline from 2.70.2 to 2.71.0.
 
 - (add release notes)
